@@ -1,0 +1,10 @@
+AI (Agentic) Enabled Agile Automated Threat Modeling
+Digital Products
+Statements
+Design an AI-powered, agentic, and modular threat modeling framework tailored for engineering sector cybersecurity. The solution should be interactive, agile, and capable of adapting to new threat vectors in real time. It must support use cases such as AI-enabled medical devices and other complex systems, providing automated analysis, risk identification, and mitigation strategies.
+
+Background
+Traditional threat modeling is often manual, static, and time-consuming, relying on limited interactivity and outdated data flow diagrams. This approach struggles to keep pace with the rapidly evolving cyber threat landscape, especially in industries adopting GenAI and Agentic AI technologies. As a result, many organizations accumulate security debt, leaving developers and operations teams vulnerable to emerging threats. There is a pressing need for a dynamic, scalable, and intelligent threat modeling framework that adapts to modern engineering use cases.
+
+Deliverables
+a working prototype or concept of an AI-enabled threat modeling framework that includes: Interactive and modular components for dynamic threat analysis. Integration of agentic AI capabilities for autonomous threat detection and response. Use case demonstration (e.g., AI-enabled medical devices). Documentation outlining the system architecture, methodology, and adaptability to evolving threats.

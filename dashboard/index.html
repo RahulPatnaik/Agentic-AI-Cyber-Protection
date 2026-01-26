@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi Guardian // THREAT DETECTION SYSTEM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- CRT Screen Effect Overlay -->
+    <div class="crt-overlay"></div>
+    <div class="scanlines"></div>
+
+    <!-- Background Grid -->
+    <div class="grid-background"></div>
+
+    <!-- Header Command Bar -->
+    <header class="command-header">
+        <div class="header-left">
+            <div class="system-badge">
+                <span class="badge-icon">◉</span>
+                <span class="badge-text">WIFI-GUARDIAN-SYS</span>
+            </div>
+            <div class="header-title">
+                <h1>THREAT DETECTION SYSTEM</h1>
+                <p class="subtitle">MULTI-AGENT DEFENSE NETWORK // PYDANTIC AI + MISTRAL</p>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="status-indicator">
+                <div class="pulse-dot"></div>
+                <span id="connection-status-text">INITIALIZING</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="dashboard-grid">
+        <!-- Live Demo Terminal -->
+        <section class="terminal-window demo-terminal">
+            <div class="window-header">
+                <span class="window-title">⚡ LIVE AGENT DEMONSTRATION</span>
+                <div class="window-controls">
+                    <span class="control-dot"></span>
+                    <span class="control-dot"></span>
+                    <span class="control-dot"></span>
+                </div>
+            </div>
+            <div class="window-content">
+                <p class="terminal-prompt">// SELECT DEMONSTRATION SCENARIO</p>
+
+                <div class="demo-controls">
+                    <button class="demo-btn btn-normal" onclick="runDemo('normal')" data-type="SAFE">
+                        <span class="btn-icon">✓</span>
+                        <span class="btn-label">NORMAL TRAFFIC</span>
+                        <span class="btn-sublabel">Baseline Detection</span>
+                    </button>
+                    <button class="demo-btn btn-threat" onclick="runDemo('threat')" data-type="THREAT">
+                        <span class="btn-icon">⚠</span>
+                        <span class="btn-label">THREAT DETECTION</span>
+                        <span class="btn-sublabel">Attack Analysis</span>
+                    </button>
+                    <button class="demo-btn btn-defense" onclick="runDefenseDemo()" data-type="DEFEND">
+                        <span class="btn-icon">🛡</span>
+                        <span class="btn-label">ACTIVE DEFENSE</span>
+                        <span class="btn-sublabel">Counter-Attack Demo</span>
+                    </button>
+                    <button class="demo-btn btn-info" onclick="showModelInfo()" data-type="INFO">
+                        <span class="btn-icon">◈</span>
+                        <span class="btn-label">MODEL STATUS</span>
+                        <span class="btn-sublabel">ML Engine Info</span>
+                    </button>
+                </div>
+
+                <div id="demo-output" class="demo-output hidden">
+                    <div class="demo-loader" id="demo-loader">
+                        <div class="radar-scanner"></div>
+                        <p class="loading-text">PROCESSING<span class="loading-dots"></span></p>
+                    </div>
+                    <div id="demo-results" class="demo-results"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- System Status Panel -->
+        <section class="terminal-window status-panel">
+            <div class="window-header">
+                <span class="window-title">⦿ SYSTEM STATUS</span>
+            </div>
+            <div class="window-content">
+                <div class="status-grid">
+                    <div class="status-card">
+                        <div class="card-header">
+                            <span class="card-icon">🛡</span>
+                            <span class="card-label">GUARDIAN</span>
+                        </div>
+                        <div class="card-status" id="guardian-status">OFFLINE</div>
+                        <div class="card-detail">ML Detection Agent</div>
+                    </div>
+                    <div class="status-card">
+                        <div class="card-header">
+                            <span class="card-icon">🧠</span>
+                            <span class="card-label">SENTINEL</span>
+                        </div>
+                        <div class="card-status" id="sentinel-status">OFFLINE</div>
+                        <div class="card-detail">LLM Reasoning Agent</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Metrics Panel -->
+        <section class="terminal-window metrics-panel">
+            <div class="window-header">
+                <span class="window-title">📊 METRICS</span>
+            </div>
+            <div class="window-content">
+                <div class="metrics-grid">
+                    <div class="metric-item">
+                        <div class="metric-label">PACKETS</div>
+                        <div class="metric-value" id="packets-processed">0</div>
+                    </div>
+                    <div class="metric-item metric-threat">
+                        <div class="metric-label">THREATS</div>
+                        <div class="metric-value" id="threats-detected">0</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">ESCALATED</div>
+                        <div class="metric-value" id="threats-escalated">0</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">UPTIME</div>
+                        <div class="metric-value" id="uptime">0s</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Alerts Feed -->
+        <section class="terminal-window alerts-feed">
+            <div class="window-header">
+                <span class="window-title">⚠ SECURITY ALERTS</span>
+                <div class="alert-counter">
+                    <span id="alert-count">0</span>
+                </div>
+            </div>
+            <div class="window-content">
+                <div id="alerts-container">
+                    <div class="no-alerts">
+                        <div class="no-alerts-icon">◯</div>
+                        <p>NO ACTIVE THREATS</p>
+                        <p class="no-alerts-sub">System monitoring...</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer Info Bar -->
+    <footer class="info-bar">
+        <div class="info-left">
+            <span class="info-label">SYSTEM:</span>
+            <span class="info-value">WiFi Guardian v0.1.0</span>
+        </div>
+        <div class="info-center">
+            <span class="info-label">ENGINE:</span>
+            <span class="info-value">RF+IF ENSEMBLE @ 84.40%</span>
+        </div>
+        <div class="info-right">
+            <span class="info-label">STATUS:</span>
+            <span class="info-value" id="connection-status">CONNECTING...</span>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
