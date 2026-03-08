@@ -971,3 +971,136 @@ body {
     color: var(--text-secondary) !important;
     font-family: var(--font-mono) !important;
 }
+
+
+/* Light Mode Theme */
+body.light-mode {
+    --ops-bg: #f5f7fa;
+    --ops-darker: #ffffff;
+    --ops-panel: #ffffff;
+    --text-primary: #1f2937;
+    --text-secondary: #4b5563;
+    --text-muted: #6b7280;
+    --cyan: #0891b2;
+    --amber: #f59e0b;
+    background: linear-gradient(135deg, #f5f7fa 0%, #e5e7eb 100%);
+}
+
+body.light-mode .ops-header {
+    background: rgba(255, 255, 255, 0.95);
+    border-bottom: 2px solid #f59e0b;
+}
+
+body.light-mode .ops-panel {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e5e7eb;
+}
+
+body.light-mode .ops-input,
+body.light-mode .ops-textarea {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    color: #1f2937;
+}
+
+body.light-mode .ops-button {
+    border: 1px solid #d1d5db;
+}
+
+body.light-mode .ops-button.primary {
+    background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+    border: none;
+}
+
+body.light-mode .stat-card {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e5e7eb;
+}
+
+body.light-mode .grid-overlay {
+    opacity: 0.02;
+}
+
+body.light-mode .scanline {
+    display: none;
+}
+
+/* Custom Modal Styles */
+.custom-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(4px);
+}
+
+.modal-content {
+    position: relative;
+    background: var(--ops-panel);
+    border: 2px solid var(--amber);
+    padding: 2rem;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 25px 50px -12px rgba(251, 146, 60, 0.25);
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid var(--ops-border);
+}
+
+.modal-bracket {
+    font-family: var(--font-mono);
+    font-size: 1.25rem;
+    color: var(--amber);
+    font-weight: 700;
+}
+
+.modal-header h3 {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-primary);
+}
+
+.modal-body {
+    margin-bottom: 1.5rem;
+}
+
+.modal-footer {
+    border-top: 1px solid var(--ops-border);
+    padding-top: 1rem;
+}
+

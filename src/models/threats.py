@@ -19,6 +19,10 @@ class SeverityLevel(str, Enum):
     CRITICAL = "critical"
 
 
+# Alias for STRIDE agent compatibility
+ThreatSeverity = SeverityLevel
+
+
 class OWASPCategory(str, Enum):
     """OWASP Top 10 2021 categories"""
     A01_BROKEN_ACCESS_CONTROL = "A01:2021-Broken Access Control"
@@ -47,6 +51,26 @@ class MITRECategory(str, Enum):
     COMMAND_AND_CONTROL = "command_and_control"
     EXFILTRATION = "exfiltration"
     IMPACT = "impact"
+
+
+class Threat(BaseModel):
+    """
+    Threat identified by STRIDE analysis
+    Simplified version of Vulnerability for STRIDE agent compatibility
+    """
+    title: str
+    description: str
+    severity: SeverityLevel
+    stride_category: Optional[str] = None  # S/T/R/I/D/E
+    owasp_category: Optional[OWASPCategory] = None
+    cwe_id: Optional[str] = None
+    cwe_name: Optional[str] = None
+    attack_vector: Optional[str] = None
+    recommendation: Optional[str] = None
+    impact: Optional[str] = None
+    likelihood: Optional[Literal["low", "medium", "high"]] = None
+    exploitability: Optional[Literal["easy", "moderate", "difficult"]] = None
+    metadata: Optional[Dict] = Field(default_factory=dict)
 
 
 class ComponentType(str, Enum):
@@ -116,6 +140,9 @@ class Vulnerability(BaseModel):
 
     # Compliance
     compliance_violations: List[str] = Field(default_factory=list)
+
+    # Additional metadata (for CVE enrichment, etc.)
+    metadata: Optional[Dict] = Field(default_factory=dict)
 
 
 class AttackPath(BaseModel):

@@ -90,7 +90,14 @@ class CWEAnalyzer:
         try:
             # Run the agent
             result = await cwe_agent.run(prompt)
-            analysis = result.data
+
+            # Extract text response from agent
+            if hasattr(result, 'data'):
+                analysis_text = str(result.data)
+            elif hasattr(result, 'output'):
+                analysis_text = str(result.output)
+            else:
+                analysis_text = str(result)
 
             # Generate CWE references
             cwe_references = self._generate_cwe_references(asset, vulnerabilities)
@@ -98,25 +105,27 @@ class CWEAnalyzer:
             return AgentAnalysis(
                 agent_name="CWE Analyzer",
                 agent_type="cwe_analyzer",
-                findings=analysis.findings if hasattr(analysis, 'findings') else [
+                findings=[
                     f"Mapped {len(vulnerabilities)} vulnerabilities to CWE database",
                     "Identified root cause weaknesses",
                     "Generated mitigation strategies"
                 ],
                 vulnerabilities_found=[],  # CWE agent doesn't find new vulns
                 confidence=0.90,
-                reasoning=analysis.reasoning if hasattr(analysis, 'reasoning') else "CWE mapping complete"
+                reasoning=analysis_text[:500] if len(analysis_text) > 500 else analysis_text
             )
 
         except Exception as e:
             logger.error("CWE analysis failed", error=str(e))
+            # Still generate CWE references using rule-based method
+            cwe_references = self._generate_cwe_references(asset, vulnerabilities)
             return AgentAnalysis(
                 agent_name="CWE Analyzer",
                 agent_type="cwe_analyzer",
-                findings=[f"Analysis failed: {str(e)}"],
+                findings=[f"LLM failed, using CWE database: {len(vulnerabilities)} mapped"],
                 vulnerabilities_found=[],
-                confidence=0.0,
-                reasoning="Analysis encountered an error"
+                confidence=0.85,
+                reasoning="Using direct CWE database mapping"
             )
 
     def _build_cwe_prompt(

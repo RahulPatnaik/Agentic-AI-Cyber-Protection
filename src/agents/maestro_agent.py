@@ -100,7 +100,14 @@ class MAESTROValidator:
         Returns:
             AgentAnalysis with MAESTRO validation results
         """
-        logger.info("Starting MAESTRO validation")
+        logger.warning("Starting MAESTRO validation")
+        logger.warning(f"MAESTRO received vulnerabilities type: {type(vulnerabilities)}")
+        logger.warning(f"MAESTRO received vulnerabilities value: {vulnerabilities if not isinstance(vulnerabilities, list) else f'list with {len(vulnerabilities)} items'}")
+
+        # Defensive check - ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            logger.error(f"MAESTRO ERROR: vulnerabilities is {type(vulnerabilities)}, converting to empty list")
+            vulnerabilities = []
 
         # Build MAESTRO validation prompt
         prompt = self._build_maestro_prompt(asset, vulnerabilities)
@@ -108,7 +115,14 @@ class MAESTROValidator:
         try:
             # Run the agent
             result = await maestro_agent.run(prompt)
-            analysis = result.data
+
+            # Extract text response from agent
+            if hasattr(result, 'data'):
+                analysis_text = str(result.data)
+            elif hasattr(result, 'output'):
+                analysis_text = str(result.output)
+            else:
+                analysis_text = str(result)
 
             # Generate MAESTRO analysis
             maestro_analysis = self._generate_maestro_analysis(asset, vulnerabilities)
@@ -116,22 +130,46 @@ class MAESTROValidator:
             return AgentAnalysis(
                 agent_name="MAESTRO Validator",
                 agent_type="maestro",
-                findings=analysis.findings if hasattr(analysis, 'findings') else list(maestro_analysis.keys()),
+                findings=list(maestro_analysis.keys()),
                 vulnerabilities_found=[],  # MAESTRO doesn't find new vulns
                 confidence=0.88,
-                reasoning=analysis.reasoning if hasattr(analysis, 'reasoning') else "MAESTRO validation complete",
+                reasoning=analysis_text[:500] if len(analysis_text) > 500 else analysis_text,
                 maestro_analysis=maestro_analysis
             )
 
         except Exception as e:
             logger.error("MAESTRO validation failed", error=str(e))
+            logger.error(f"Exception type: {type(e)}")
+            logger.error(f"Exception args: {e.args}")
+            import traceback
+            logger.error(f"MAESTRO Traceback:\n{traceback.format_exc()}")
+
+            # Still return MAESTRO analysis even if LLM fails
+            try:
+                maestro_analysis = self._generate_maestro_analysis(asset, vulnerabilities)
+            except Exception as e2:
+                logger.error(f"MAESTRO _generate_maestro_analysis ALSO failed: {e2}")
+                import traceback
+                logger.error(f"MAESTRO _generate_maestro_analysis Traceback:\n{traceback.format_exc()}")
+                # Return empty analysis
+                return AgentAnalysis(
+                    agent_name="MAESTRO Validator",
+                    agent_type="maestro",
+                    findings=["MAESTRO analysis completely failed"],
+                    vulnerabilities_found=[],
+                    confidence=0.0,
+                    reasoning="MAESTRO analysis encountered critical errors",
+                    maestro_analysis={}
+                )
+
             return AgentAnalysis(
                 agent_name="MAESTRO Validator",
                 agent_type="maestro",
-                findings=[f"Analysis failed: {str(e)}"],
+                findings=[f"LLM analysis failed, using rule-based validation: {str(e)}"],
                 vulnerabilities_found=[],
-                confidence=0.0,
-                reasoning="Analysis encountered an error"
+                confidence=0.7,
+                reasoning="Using rule-based MAESTRO validation",
+                maestro_analysis=maestro_analysis
             )
 
     def _build_maestro_prompt(
@@ -141,6 +179,22 @@ class MAESTROValidator:
     ) -> str:
         """Build MAESTRO validation prompt"""
 
+        # Defensive: ensure all asset list fields are actually lists
+        prog_langs = asset.programming_languages if isinstance(asset.programming_languages, list) else []
+        frameworks = asset.frameworks if isinstance(asset.frameworks, list) else []
+        ext_deps = asset.external_dependencies if isinstance(asset.external_dependencies, list) else []
+        user_roles = asset.user_roles if isinstance(asset.user_roles, list) else []
+
+        # Log if any field is NOT a list
+        if not isinstance(asset.programming_languages, list):
+            logger.error(f"programming_languages is {type(asset.programming_languages)}: {asset.programming_languages}")
+        if not isinstance(asset.frameworks, list):
+            logger.error(f"frameworks is {type(asset.frameworks)}: {asset.frameworks}")
+        if not isinstance(asset.external_dependencies, list):
+            logger.error(f"external_dependencies is {type(asset.external_dependencies)}: {asset.external_dependencies}")
+        if not isinstance(asset.user_roles, list):
+            logger.error(f"user_roles is {type(asset.user_roles)}: {asset.user_roles}")
+
         prompt = f"""Validate the following system against MAESTRO security principles:
 
 SYSTEM DESCRIPTION:
@@ -148,23 +202,29 @@ SYSTEM DESCRIPTION:
 
 SYSTEM CHARACTERISTICS:
 - Component Type: {asset.component_type.value if asset.component_type else 'unknown'}
-- Programming Languages: {', '.join(asset.programming_languages)}
-- Frameworks: {', '.join(asset.frameworks)}
-- External Dependencies: {', '.join(asset.external_dependencies)}
+- Programming Languages: {', '.join(prog_langs) if prog_langs else 'unknown'}
+- Frameworks: {', '.join(frameworks) if frameworks else 'unknown'}
+- External Dependencies: {', '.join(ext_deps) if ext_deps else 'unknown'}
 - Internet Facing: {'Yes' if asset.internet_facing else 'No'}
 - Data Sensitivity: {asset.data_sensitivity.value if asset.data_sensitivity else 'unknown'}
-- User Roles: {', '.join(asset.user_roles)}
+- User Roles: {', '.join(user_roles) if user_roles else 'unknown'}
 
 IDENTIFIED VULNERABILITIES:
 """
 
-        for i, vuln in enumerate(vulnerabilities[:5], 1):  # Top 5 vulnerabilities
-            prompt += f"""
+        # Defensive: ensure we can iterate over vulnerabilities
+        try:
+            vuln_list = list(vulnerabilities[:5]) if vulnerabilities else []
+            for i, vuln in enumerate(vuln_list, 1):  # Top 5 vulnerabilities
+                prompt += f"""
 {i}. {vuln.title}
    - Severity: {vuln.severity.value}
    - CWE: {vuln.cwe_id}
    - Impact: {vuln.impact}
 """
+        except (TypeError, AttributeError) as e:
+            logger.error(f"Error iterating vulnerabilities: {e}, type: {type(vulnerabilities)}")
+            prompt += "\nNo vulnerabilities available for analysis.\n"
 
         prompt += """
 VALIDATION REQUIRED:
@@ -222,6 +282,10 @@ Provide a comprehensive MAESTRO validation report.
     ) -> str:
         """Validate Minimize Attack Surface principle"""
 
+        # Defensive: ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            vulnerabilities = []
+
         issues = []
 
         # Check for unnecessary exposed functionality
@@ -229,7 +293,8 @@ Provide a comprehensive MAESTRO validation report.
             issues.append("System is internet-facing, increasing attack surface")
 
         # Check for admin/debug endpoints
-        if any('admin' in str(asset.description).lower() or 'debug' in str(asset.description).lower()):
+        desc_lower = str(asset.description).lower()
+        if 'admin' in desc_lower or 'debug' in desc_lower:
             issues.append("Potential admin/debug endpoints exposed")
 
         # Check for misconfiguration vulnerabilities
@@ -249,6 +314,10 @@ Provide a comprehensive MAESTRO validation report.
     ) -> str:
         """Validate Authentication & Authorization principle"""
 
+        # Defensive: ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            vulnerabilities = []
+
         issues = []
 
         # Check for authentication/authorization vulnerabilities
@@ -257,7 +326,7 @@ Provide a comprehensive MAESTRO validation report.
             issues.append(f"Found {len(auth_vulns)} authentication/authorization vulnerabilities")
 
         # Check if authentication component
-        if asset.component_type == 'authentication':
+        if asset.component_type and str(asset.component_type.value).lower() == 'authentication':
             issues.append("Authentication component requires extra scrutiny")
 
         # Check for weak password vulnerabilities
@@ -275,6 +344,10 @@ Provide a comprehensive MAESTRO validation report.
         vulnerabilities: List[Vulnerability]
     ) -> str:
         """Validate Establish Secure Defaults principle"""
+
+        # Defensive: ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            vulnerabilities = []
 
         issues = []
 
@@ -298,6 +371,10 @@ Provide a comprehensive MAESTRO validation report.
     ) -> str:
         """Validate Separation of Duties principle"""
 
+        # Defensive: ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            vulnerabilities = []
+
         issues = []
 
         # Check for privilege escalation
@@ -305,7 +382,7 @@ Provide a comprehensive MAESTRO validation report.
             issues.append("Privilege escalation vulnerability indicates insufficient separation")
 
         # Check if multiple roles defined
-        if len(asset.user_roles) <= 1:
+        if not asset.user_roles or len(asset.user_roles) <= 1:
             issues.append("Single or no user roles defined - may lack separation of duties")
 
         if issues:
@@ -319,6 +396,10 @@ Provide a comprehensive MAESTRO validation report.
         vulnerabilities: List[Vulnerability]
     ) -> str:
         """Validate Trust But Verify principle"""
+
+        # Defensive: ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            vulnerabilities = []
 
         issues = []
 
@@ -347,6 +428,10 @@ Provide a comprehensive MAESTRO validation report.
     ) -> str:
         """Validate Resilience and Recovery principle"""
 
+        # Defensive: ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            vulnerabilities = []
+
         issues = []
 
         # Check for availability issues
@@ -369,6 +454,10 @@ Provide a comprehensive MAESTRO validation report.
     ) -> str:
         """Validate Observability and Monitoring principle"""
 
+        # Defensive: ensure vulnerabilities is a list
+        if not isinstance(vulnerabilities, list):
+            vulnerabilities = []
+
         issues = []
 
         # Check for logging/monitoring vulnerabilities
@@ -377,7 +466,7 @@ Provide a comprehensive MAESTRO validation report.
             issues.append(f"Found {len(logging_vulns)} logging/monitoring vulnerabilities")
 
         # High sensitivity data requires strong monitoring
-        if asset.data_sensitivity in ['high', 'critical']:
+        if asset.data_sensitivity and str(asset.data_sensitivity.value).lower() in ['high', 'critical']:
             issues.append("High sensitivity data requires comprehensive monitoring")
 
         if issues:

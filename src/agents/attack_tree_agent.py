@@ -79,7 +79,14 @@ class AttackTreeAnalyzer:
         try:
             # Run the agent
             result = await attack_tree_agent.run(prompt)
-            analysis = result.data
+
+            # Extract text response from agent
+            if hasattr(result, 'data'):
+                analysis_text = str(result.data)
+            elif hasattr(result, 'output'):
+                analysis_text = str(result.output)
+            else:
+                analysis_text = str(result)
 
             # Generate structured attack paths
             attack_paths = self._generate_attack_paths(asset, vulnerabilities)
@@ -87,25 +94,27 @@ class AttackTreeAnalyzer:
             return AgentAnalysis(
                 agent_name="Attack Tree Analyzer",
                 agent_type="attack_tree",
-                findings=analysis.findings if hasattr(analysis, 'findings') else [
+                findings=[
                     f"Generated {len(attack_paths)} attack paths",
                     "Identified critical attack vectors",
                     "Mapped attack progression scenarios"
                 ],
                 vulnerabilities_found=[],  # Attack tree doesn't find new vulns
                 confidence=0.85,
-                reasoning=analysis.reasoning if hasattr(analysis, 'reasoning') else "Attack path analysis complete"
+                reasoning=analysis_text[:500] if len(analysis_text) > 500 else analysis_text
             )
 
         except Exception as e:
             logger.error("Attack tree analysis failed", error=str(e))
+            # Still generate attack paths using rule-based method
+            attack_paths = self._generate_attack_paths(asset, vulnerabilities)
             return AgentAnalysis(
                 agent_name="Attack Tree Analyzer",
                 agent_type="attack_tree",
-                findings=[f"Analysis failed: {str(e)}"],
+                findings=[f"LLM failed, using rule-based paths: {len(attack_paths)} generated"],
                 vulnerabilities_found=[],
-                confidence=0.0,
-                reasoning="Analysis encountered an error"
+                confidence=0.7,
+                reasoning="Using rule-based attack path generation"
             )
 
     def _build_attack_tree_prompt(
@@ -183,7 +192,11 @@ Focus on:
         # Generate multi-step attack paths (chaining vulnerabilities)
         attack_paths.extend(self._chained_attack_paths(asset, vulnerabilities))
 
-        return attack_paths[:7]  # Return top 7 paths
+        # NEW: Generate individual attack paths for each vulnerability
+        attack_paths.extend(self._vulnerability_specific_paths(asset, vulnerabilities))
+
+        # Return more paths - up to 15 instead of 7
+        return attack_paths[:15]
 
     def _api_attack_paths(
         self,
@@ -354,6 +367,177 @@ Focus on:
             ))
 
         return paths
+
+    def _vulnerability_specific_paths(
+        self,
+        asset: AssetInput,
+        vulnerabilities: List[Vulnerability]
+    ) -> List[AttackPath]:
+        """Generate INTERESTING attack paths for each vulnerability - NO BORING REPETITIVE SHIT"""
+
+        paths = []
+
+        # Map vulnerability types to interesting attack scenarios
+        vuln_scenarios = {
+            'sql injection': {
+                'steps': [
+                    "Inject SQL payload into input field",
+                    "Bypass authentication with OR 1=1",
+                    "Enumerate database schema using UNION queries",
+                    "Extract sensitive data via blind SQL injection",
+                    "Execute stored procedures for privilege escalation"
+                ],
+                'target': "Database takeover and data exfiltration"
+            },
+            'cross-site scripting': {
+                'steps': [
+                    "Inject malicious JavaScript into user input",
+                    "Store payload in database (stored XSS)",
+                    "Victim loads page containing payload",
+                    "Steal session cookies and auth tokens",
+                    "Hijack user session and perform actions as victim"
+                ],
+                'target': "Session hijacking and account takeover"
+            },
+            'broken access control': {
+                'steps': [
+                    "Discover unprotected admin endpoints",
+                    "Manipulate user IDs in API requests (IDOR)",
+                    "Access other users' sensitive data",
+                    "Escalate privileges to admin role",
+                    "Modify system configurations"
+                ],
+                'target': "Administrative access and privilege escalation"
+            },
+            'authentication': {
+                'steps': [
+                    "Enumerate valid usernames via timing attacks",
+                    "Brute force weak credentials",
+                    "Exploit missing rate limiting",
+                    "Bypass 2FA using session fixation",
+                    "Create persistent backdoor account"
+                ],
+                'target': "Complete authentication bypass"
+            },
+            'insecure deserialization': {
+                'steps': [
+                    "Identify serialized object endpoints",
+                    "Craft malicious serialized payload",
+                    "Trigger remote code execution via deserialization",
+                    "Execute system commands",
+                    "Install persistence mechanisms"
+                ],
+                'target': "Remote code execution and system control"
+            },
+            'xxe': {
+                'steps': [
+                    "Submit XML with external entity references",
+                    "Read local files via XXE (e.g., /etc/passwd)",
+                    "Perform SSRF to access internal services",
+                    "Exfiltrate data via out-of-band XXE",
+                    "Denial of service via billion laughs attack"
+                ],
+                'target': "File disclosure and internal network access"
+            },
+            'ssrf': {
+                'steps': [
+                    "Manipulate URL parameter to point to internal IP",
+                    "Access cloud metadata endpoints (169.254.169.254)",
+                    "Retrieve AWS/Azure credentials from metadata",
+                    "Pivot to internal services and databases",
+                    "Exfiltrate sensitive internal data"
+                ],
+                'target': "Cloud credential theft and lateral movement"
+            },
+            'command injection': {
+                'steps': [
+                    "Inject OS commands via unsanitized input",
+                    "Chain commands using ; && || operators",
+                    "Download and execute malicious payload",
+                    "Establish reverse shell connection",
+                    "Escalate to root via kernel exploits"
+                ],
+                'target': "Complete server compromise and root access"
+            },
+            'csrf': {
+                'steps': [
+                    "Craft malicious page with forged requests",
+                    "Trick authenticated user into visiting page",
+                    "Execute state-changing actions (password change, fund transfer)",
+                    "Use XSS to automate CSRF exploitation",
+                    "Chain with clickjacking for complex attacks"
+                ],
+                'target': "Unauthorized actions on behalf of victim"
+            },
+            'path traversal': {
+                'steps': [
+                    "Inject ../ sequences into file path parameters",
+                    "Read sensitive files (/etc/shadow, web.config)",
+                    "Access application source code",
+                    "Extract database credentials from config files",
+                    "Use credentials for further exploitation"
+                ],
+                'target': "Configuration file disclosure and credential theft"
+            }
+        }
+
+        # Only create interesting paths for top vulnerabilities (avoid spam)
+        for vuln in vulnerabilities[:8]:  # Top 8 only
+            # Find matching scenario based on vulnerability title/CWE
+            scenario = None
+            vuln_key = vuln.title.lower()
+
+            for key, data in vuln_scenarios.items():
+                if key in vuln_key or key.replace(' ', '') in vuln_key.replace(' ', ''):
+                    scenario = data
+                    break
+
+            # Skip if no interesting scenario (avoids generic boring paths)
+            if not scenario:
+                continue
+
+            path = AttackPath(
+                name=f"{vuln.title} → {scenario['target'][:40]}",
+                description=f"Sophisticated attack exploiting {vuln.title}",
+                entry_point=vuln.attack_vector or "User-controlled input field",
+                intermediate_steps=scenario['steps'],
+                target=scenario['target'],
+                impact=vuln.impact,
+                complexity=self._estimate_complexity(vuln),
+                probability=self._estimate_probability(vuln),
+                potential_damage=vuln.severity,
+                vulnerabilities=[vuln.vuln_id]
+            )
+            paths.append(path)
+
+        return paths
+
+    def _estimate_complexity(self, vuln: Vulnerability) -> str:
+        """Estimate attack complexity from CVSS score"""
+        if vuln.cvss_score >= 9.0:
+            return "low"  # High CVSS = easy to exploit
+        elif vuln.cvss_score >= 7.0:
+            return "medium"
+        else:
+            return "high"
+
+    def _estimate_probability(self, vuln: Vulnerability) -> float:
+        """Estimate attack probability from severity and exploitability"""
+        base_prob = {
+            'critical': 0.85,
+            'high': 0.70,
+            'medium': 0.50,
+            'low': 0.30
+        }.get(vuln.severity.value, 0.50)
+
+        # Adjust based on exploitability
+        if vuln.exploitability:
+            if 'high' in vuln.exploitability.lower() or 'easy' in vuln.exploitability.lower():
+                base_prob += 0.10
+            elif 'low' in vuln.exploitability.lower() or 'difficult' in vuln.exploitability.lower():
+                base_prob -= 0.15
+
+        return min(0.95, max(0.10, base_prob))
 
     def build_graph_structure(
         self,
