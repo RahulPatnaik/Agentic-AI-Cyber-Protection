@@ -4,6 +4,7 @@ Uses Pydantic AI with Mistral to identify OWASP vulnerabilities
 """
 
 from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import structlog
 
@@ -20,37 +21,88 @@ from src.config import Settings
 logger = structlog.get_logger()
 
 
-# Define the OWASP Analyzer Agent
+# Structured output model for LLM response
+class VulnerabilityFinding(BaseModel):
+    """Single vulnerability finding from LLM"""
+    title: str = Field(description="Vulnerability title")
+    description: str = Field(description="Detailed description")
+    severity: str = Field(description="critical/high/medium/low")
+    cvss_score: float = Field(description="CVSS score 0.0-10.0")
+    cwe_id: str = Field(description="CWE ID (e.g., CWE-89)")
+    cwe_name: str = Field(description="CWE name")
+    owasp_category: str = Field(description="OWASP category (e.g., A03_INJECTION)")
+    attack_vector: str = Field(description="How the attack works")
+    prerequisites: List[str] = Field(description="What conditions enable this vulnerability")
+    impact: str = Field(description="What happens if exploited")
+    affected_component: str = Field(description="Which component is affected")
+    recommendation: str = Field(description="High-level fix recommendation")
+    remediation_steps: List[str] = Field(description="Specific actionable steps to fix")
+    likelihood: str = Field(description="low/medium/high")
+    exploitability: str = Field(description="easy/moderate/difficult")
+
+
+class OWASPAnalysisResult(BaseModel):
+    """Complete OWASP analysis from LLM"""
+    vulnerabilities: List[VulnerabilityFinding] = Field(description="List of vulnerabilities found")
+    summary: str = Field(description="Overall analysis summary")
+    risk_assessment: str = Field(description="Overall risk level")
+
+
+# Define the OWASP Analyzer Agent with structured output
 owasp_agent = Agent(
     'mistral:mistral-large-latest',
-    system_prompt="""You are an expert OWASP security analyst specializing in OWASP Top 10 2021 vulnerability detection.
+    output_type=OWASPAnalysisResult,  # 🔥 STRUCTURED OUTPUT
+    system_prompt="""You are an expert OWASP security analyst specializing in OWASP Top 10 2021 vulnerability detection AND OWASP LLM Top 10 for AI/agentic systems.
 
 Your role:
 1. Analyze system/feature descriptions for OWASP Top 10 vulnerabilities
 2. Identify specific weaknesses with CWE mappings
 3. Assess severity and likelihood
 4. Provide detailed remediation recommendations
+5. **For AI/agentic systems: detect prompt injection, tool misuse, MCP vulnerabilities, and agent-specific threats**
 
-OWASP Top 10 2021 Categories:
-- A01:2021 - Broken Access Control
-- A02:2021 - Cryptographic Failures
-- A03:2021 - Injection
-- A04:2021 - Insecure Design
-- A05:2021 - Security Misconfiguration
-- A06:2021 - Vulnerable and Outdated Components
-- A07:2021 - Identification and Authentication Failures
-- A08:2021 - Software and Data Integrity Failures
-- A09:2021 - Security Logging and Monitoring Failures
-- A10:2021 - Server-Side Request Forgery
+OWASP Top 10 2021 Categories (use these exact strings for owasp_category):
+- A01_BROKEN_ACCESS_CONTROL
+- A02_CRYPTOGRAPHIC_FAILURES
+- A03_INJECTION (also applies to prompt injection!)
+- A04_INSECURE_DESIGN
+- A05_SECURITY_MISCONFIGURATION
+- A06_VULNERABLE_COMPONENTS
+- A07_AUTH_FAILURES
+- A08_DATA_INTEGRITY_FAILURES
+- A09_LOGGING_FAILURES
+- A10_SSRF
+
+**OWASP LLM Top 10 2023 (for AI/agentic systems):**
+When analyzing AI agents, LLM endpoints, MCP servers, or agentic components, ALSO consider:
+- **LLM01: Prompt Injection** - Direct/indirect manipulation of agent instructions
+- **LLM02: Insecure Output Handling** - Unvalidated agent outputs used in dangerous contexts
+- **LLM03: Supply Chain** - Malicious MCP servers, compromised packages
+- **LLM06: Sensitive Information Disclosure** - Agents leaking credentials, PII, secrets
+- **LLM07: Insecure Plugin Design** - MCP tools without proper security controls
+- **LLM08: Excessive Agency** - Agents with too much autonomy/tool access
+- **LLM09: Overreliance** - Agents trusted without validation
+
+**AI/Agentic System Vulnerabilities to Check:**
+- Prompt injection vulnerabilities (user input influencing agent behavior)
+- Missing input validation on prompts
+- Tool misuse (filesystem, database, code execution tools without restrictions)
+- MCP security issues (authentication, parameter injection, response poisoning)
+- Agent goal hijacking risks
+- Context poisoning vulnerabilities
+- Multi-agent coordination attack vectors
+- Recursive delegation exploits
 
 Guidelines:
 - Focus on the most critical vulnerabilities (severity: high/critical)
-- Map each vulnerability to specific CWE IDs
+- Map each vulnerability to specific CWE IDs (format: CWE-89, CWE-79, etc.)
+- **For agentic systems, use CWE-94 (Code Injection) for prompt injection, CWE-732 for tool permission issues**
 - Provide concrete, actionable remediation steps
-- Include code examples for fixes when applicable
 - Consider the component type and context
+- **If component is AI agent, LLM endpoint, MCP server, or tool integration - prioritize agentic threats**
+- Return 5-10 most critical vulnerabilities
 
-Return your analysis in a structured format with clear vulnerability findings.
+IMPORTANT: Return a structured OWASPAnalysisResult with vulnerabilities list.
 """
 )
 
@@ -78,63 +130,90 @@ class OWASPAnalyzer:
         prompt = self._build_analysis_prompt(asset)
 
         try:
-            # Run the agent
+            # Run the agent - NOW WITH STRUCTURED OUTPUT! 🔥
             result = await owasp_agent.run(prompt)
 
-            # Extract text response from agent
-            # Pydantic AI returns the response in different ways depending on version
-            if hasattr(result, 'data'):
-                analysis_text = str(result.data)
-            elif hasattr(result, 'output'):
-                analysis_text = str(result.output)
-            else:
-                analysis_text = str(result)
+            # Extract structured data (Pydantic AI returns OWASPAnalysisResult)
+            llm_analysis: OWASPAnalysisResult = result.output
 
-            # Get structured vulnerabilities based on asset type
-            vulnerability_patterns = self._get_vulnerability_patterns(asset)
+            # Convert LLM findings to Vulnerability objects
             vulnerabilities = []
-            for pattern in vulnerability_patterns:
+            for finding in llm_analysis.vulnerabilities:
+                # Map string severity to SeverityLevel enum
+                severity_map = {
+                    'critical': SeverityLevel.CRITICAL,
+                    'high': SeverityLevel.HIGH,
+                    'medium': SeverityLevel.MEDIUM,
+                    'low': SeverityLevel.LOW
+                }
+                severity = severity_map.get(finding.severity.lower(), SeverityLevel.MEDIUM)
+
+                # Map OWASP category string to enum
+                owasp_map = {
+                    'A01_BROKEN_ACCESS_CONTROL': OWASPCategory.A01_BROKEN_ACCESS_CONTROL,
+                    'A02_CRYPTOGRAPHIC_FAILURES': OWASPCategory.A02_CRYPTOGRAPHIC_FAILURES,
+                    'A03_INJECTION': OWASPCategory.A03_INJECTION,
+                    'A04_INSECURE_DESIGN': OWASPCategory.A04_INSECURE_DESIGN,
+                    'A05_SECURITY_MISCONFIGURATION': OWASPCategory.A05_SECURITY_MISCONFIGURATION,
+                    'A06_VULNERABLE_COMPONENTS': OWASPCategory.A06_VULNERABLE_COMPONENTS,
+                    'A07_AUTH_FAILURES': OWASPCategory.A07_AUTH_FAILURES,
+                    'A08_DATA_INTEGRITY_FAILURES': OWASPCategory.A08_DATA_INTEGRITY_FAILURES,
+                    'A09_LOGGING_FAILURES': OWASPCategory.A09_LOGGING_FAILURES,
+                    'A10_SSRF': OWASPCategory.A10_SSRF
+                }
+                owasp_category = owasp_map.get(finding.owasp_category, OWASPCategory.A04_INSECURE_DESIGN)
+
+                # Calculate risk score
+                likelihood_score = {'low': 0.3, 'medium': 0.6, 'high': 0.9}.get(finding.likelihood.lower(), 0.5)
+                risk_score = finding.cvss_score * likelihood_score
+
                 vuln = Vulnerability(
-                    title=pattern['title'],
-                    description=pattern['description'],
-                    severity=pattern['severity'],
-                    cvss_score=pattern['cvss_score'],
-                    cwe_id=pattern['cwe_id'],
-                    cwe_name=pattern['cwe_name'],
-                    owasp_category=pattern['owasp_category'],
-                    mitre_tactic=pattern.get('mitre_tactic'),
-                    attack_vector=pattern['attack_vector'],
-                    prerequisites=pattern['prerequisites'],
-                    impact=pattern['impact'],
-                    affected_component=str(asset.component_type.value if asset.component_type else 'system'),
-                    recommendation=pattern['recommendation'],
-                    remediation_steps=pattern['remediation_steps'],
-                    code_fix_example=pattern.get('code_fix_example'),
-                    likelihood=pattern['likelihood'],
-                    risk_score=pattern['risk_score'],
-                    exploitability=pattern['exploitability']
+                    title=finding.title,
+                    description=finding.description,
+                    severity=severity,
+                    cvss_score=finding.cvss_score,
+                    cwe_id=finding.cwe_id,
+                    cwe_name=finding.cwe_name,
+                    owasp_category=owasp_category,
+                    mitre_tactic=MITRECategory.INITIAL_ACCESS,  # Could be enhanced
+                    attack_vector=finding.attack_vector,
+                    prerequisites=finding.prerequisites,
+                    impact=finding.impact,
+                    affected_component=finding.affected_component,
+                    recommendation=finding.recommendation,
+                    remediation_steps=finding.remediation_steps,
+                    code_fix_example=None,  # LLM can provide this if needed
+                    likelihood=finding.likelihood,
+                    risk_score=risk_score,
+                    exploitability=finding.exploitability
                 )
                 vulnerabilities.append(vuln)
 
-            # Extract findings from the analysis text
             findings = [
                 f"Analyzed {asset.component_type.value if asset.component_type else 'system'} for OWASP Top 10 vulnerabilities",
-                f"Found {len(vulnerabilities)} potential vulnerabilities",
-                f"LLM Analysis: {analysis_text[:200]}..." if len(analysis_text) > 200 else f"LLM Analysis: {analysis_text}"
+                f"Found {len(vulnerabilities)} vulnerabilities using LLM analysis",
+                f"Risk Assessment: {llm_analysis.risk_assessment}",
+                f"Summary: {llm_analysis.summary}"
             ]
+
+            logger.info(
+                "OWASP analysis complete",
+                vulnerabilities_found=len(vulnerabilities),
+                using_llm=True
+            )
 
             return AgentAnalysis(
                 agent_name="OWASP Analyzer",
                 agent_type="owasp",
                 findings=findings,
                 vulnerabilities_found=vulnerabilities,
-                confidence=0.9,
-                reasoning=analysis_text[:500] if len(analysis_text) > 500 else analysis_text
+                confidence=0.95,  # Higher confidence with actual LLM analysis
+                reasoning=llm_analysis.summary
             )
 
         except Exception as e:
-            logger.error("OWASP analysis failed", error=str(e))
-            # Return minimal analysis on failure with fallback vulnerabilities
+            logger.error("OWASP analysis failed, using fallback patterns", error=str(e))
+            # Fallback to pattern-based detection if LLM fails
             fallback_patterns = self._get_vulnerability_patterns(asset)
             fallback_vulns = []
             for pattern in fallback_patterns:
@@ -159,13 +238,24 @@ class OWASPAnalyzer:
                     exploitability=pattern['exploitability']
                 )
                 fallback_vulns.append(vuln)
+
+            logger.info(
+                "Using fallback pattern detection",
+                vulnerabilities_found=len(fallback_vulns),
+                using_llm=False
+            )
+
             return AgentAnalysis(
                 agent_name="OWASP Analyzer",
                 agent_type="owasp",
-                findings=[f"LLM analysis failed, using pattern-based detection: {str(e)}"],
+                findings=[
+                    f"LLM analysis failed: {str(e)}",
+                    f"Using pattern-based detection as fallback",
+                    f"Found {len(fallback_vulns)} potential vulnerabilities"
+                ],
                 vulnerabilities_found=fallback_vulns,
                 confidence=0.6,  # Lower confidence for fallback
-                reasoning="Using pattern-based vulnerability detection due to LLM error"
+                reasoning=f"Pattern-based detection (LLM error: {str(e)})"
             )
 
     def _build_analysis_prompt(self, asset: AssetInput) -> str:

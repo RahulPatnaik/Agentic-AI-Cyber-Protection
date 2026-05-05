@@ -4,6 +4,7 @@ Maps vulnerabilities to CWE database with detailed mitigation strategies
 """
 
 from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel, Field
 from typing import List, Dict
 import structlog
 
@@ -20,9 +21,27 @@ from src.config import Settings
 logger = structlog.get_logger()
 
 
-# Define the CWE Analyzer Agent
+# Structured output models for LLM
+class CWEMapping(BaseModel):
+    """Single CWE mapping from LLM"""
+    vulnerability_title: str = Field(description="Original vulnerability title")
+    cwe_id: str = Field(description="CWE ID (e.g., CWE-89)")
+    cwe_name: str = Field(description="Official CWE name")
+    root_cause: str = Field(description="Why this weakness exists")
+    maestro_violations: List[str] = Field(description="MAESTRO principles violated")
+    mitigation_strategies: List[str] = Field(description="Specific mitigation steps")
+
+
+class CWEAnalysisResult(BaseModel):
+    """Complete CWE analysis from LLM"""
+    cwe_mappings: List[CWEMapping] = Field(description="List of CWE mappings")
+    summary: str = Field(description="Overall CWE analysis summary")
+
+
+# Define the CWE Analyzer Agent with structured output
 cwe_agent = Agent(
     'mistral:mistral-large-latest',
+    output_type=CWEAnalysisResult,  # 🔥 STRUCTURED OUTPUT
     system_prompt="""You are an expert CWE (Common Weakness Enumeration) analyst with deep knowledge of software weaknesses.
 
 Your role:
@@ -88,44 +107,68 @@ class CWEAnalyzer:
         prompt = self._build_cwe_prompt(asset, vulnerabilities)
 
         try:
-            # Run the agent
+            # Run the agent with structured output 🔥
             result = await cwe_agent.run(prompt)
 
-            # Extract text response from agent
-            if hasattr(result, 'data'):
-                analysis_text = str(result.data)
-            elif hasattr(result, 'output'):
-                analysis_text = str(result.output)
-            else:
-                analysis_text = str(result)
+            # Extract structured data from LLM
+            llm_result: CWEAnalysisResult = result.output
 
-            # Generate CWE references
-            cwe_references = self._generate_cwe_references(asset, vulnerabilities)
+            # Update vulnerabilities with enhanced CWE info from LLM
+            for mapping in llm_result.cwe_mappings:
+                # Find matching vulnerability
+                for vuln in vulnerabilities:
+                    if vuln.title == mapping.vulnerability_title:
+                        # Clean CWE ID - extract just "CWE-XXX" part
+                        # LLM might return "CWE-89: SQL Injection", we only want "CWE-89"
+                        cwe_id_clean = mapping.cwe_id.split(':')[0].strip() if ':' in mapping.cwe_id else mapping.cwe_id
+
+                        # Update CWE info with LLM analysis
+                        vuln.cwe_id = cwe_id_clean
+                        vuln.cwe_name = mapping.cwe_name
+                        # Enhance remediation steps with LLM suggestions
+                        vuln.remediation_steps.extend(mapping.mitigation_strategies)
+                        break
+
+            logger.info(
+                "CWE analysis complete using LLM",
+                cwe_mappings=len(llm_result.cwe_mappings),
+                using_llm=True
+            )
 
             return AgentAnalysis(
                 agent_name="CWE Analyzer",
                 agent_type="cwe_analyzer",
                 findings=[
-                    f"Mapped {len(vulnerabilities)} vulnerabilities to CWE database",
+                    f"Mapped {len(llm_result.cwe_mappings)} vulnerabilities to CWE database using LLM",
                     "Identified root cause weaknesses",
-                    "Generated mitigation strategies"
+                    "Generated enhanced mitigation strategies",
+                    f"Summary: {llm_result.summary}"
                 ],
                 vulnerabilities_found=[],  # CWE agent doesn't find new vulns
-                confidence=0.90,
-                reasoning=analysis_text[:500] if len(analysis_text) > 500 else analysis_text
+                confidence=0.95,  # Higher confidence with LLM
+                reasoning=llm_result.summary
             )
 
         except Exception as e:
-            logger.error("CWE analysis failed", error=str(e))
-            # Still generate CWE references using rule-based method
+            logger.error("CWE analysis failed, using fallback", error=str(e))
+            # Fallback to rule-based CWE mapping
             cwe_references = self._generate_cwe_references(asset, vulnerabilities)
+            logger.info(
+                "Using fallback CWE database mapping",
+                cwe_mappings=len(vulnerabilities),
+                using_llm=False
+            )
             return AgentAnalysis(
                 agent_name="CWE Analyzer",
                 agent_type="cwe_analyzer",
-                findings=[f"LLM failed, using CWE database: {len(vulnerabilities)} mapped"],
+                findings=[
+                    f"LLM failed: {str(e)}",
+                    f"Using CWE database: {len(vulnerabilities)} mapped",
+                    "Fallback to rule-based CWE mapping"
+                ],
                 vulnerabilities_found=[],
-                confidence=0.85,
-                reasoning="Using direct CWE database mapping"
+                confidence=0.75,
+                reasoning=f"Direct CWE database mapping (LLM error: {str(e)})"
             )
 
     def _build_cwe_prompt(
@@ -185,11 +228,15 @@ Focus on:
         cwe_refs = []
 
         for vuln in vulnerabilities:
+            # Clean CWE ID - extract just "CWE-XXX" part
+            # Handle cases like "CWE-89: SQL Injection" or "CWE-89"
+            cwe_id_clean = vuln.cwe_id.split(':')[0].strip() if ':' in vuln.cwe_id else vuln.cwe_id
+
             # Get CWE details from database
-            cwe_details = self.cwe_database.get(vuln.cwe_id, {})
+            cwe_details = self.cwe_database.get(cwe_id_clean, {})
 
             cwe_ref = CWEReference(
-                cwe_id=vuln.cwe_id,
+                cwe_id=cwe_id_clean,
                 cwe_name=vuln.cwe_name,
                 description=cwe_details.get('description', vuln.description),
                 likelihood=vuln.likelihood,
@@ -200,7 +247,7 @@ Focus on:
                 maestro_violations=self._identify_maestro_violations(vuln),
                 mitigation_strategies=vuln.remediation_steps,
                 references=[
-                    f"https://cwe.mitre.org/data/definitions/{vuln.cwe_id.split('-')[1]}.html",
+                    f"https://cwe.mitre.org/data/definitions/{cwe_id_clean.split('-')[1]}.html",
                     f"OWASP: {vuln.owasp_category.value}"
                 ]
             )

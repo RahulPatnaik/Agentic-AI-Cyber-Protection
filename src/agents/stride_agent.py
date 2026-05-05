@@ -15,6 +15,27 @@ from src.models.threats import Threat, ThreatSeverity, OWASPCategory
 logger = structlog.get_logger()
 
 
+# Structured output models for LLM
+class ThreatFinding(BaseModel):
+    """Single threat finding from LLM"""
+    title: str = Field(description="Threat title")
+    description: str = Field(description="Detailed threat description")
+    severity: str = Field(description="critical/high/medium/low")
+    owasp_category: str = Field(description="OWASP category")
+    cwe_id: str = Field(description="CWE ID")
+    attack_vector: str = Field(description="How the attack works")
+    recommendation: str = Field(description="Mitigation recommendation")
+
+
+class STRIDECategoryResult(BaseModel):
+    """Result for a single STRIDE category"""
+    category_code: str = Field(description="S/T/R/I/D/E")
+    category_name: str = Field(description="Full category name")
+    threats: List[ThreatFinding] = Field(description="Threats found in this category")
+    summary: str = Field(description="Summary of analysis for this category")
+    risk_level: str = Field(description="low/medium/high/critical")
+
+
 class STRIDEAnalysis(BaseModel):
     """STRIDE analysis result"""
     category: str = Field(description="STRIDE category (S/T/R/I/D/E)")
@@ -40,9 +61,10 @@ class STRIDEAgent:
         self.settings = settings
         self.logger = structlog.get_logger().bind(agent="stride")
 
-        # Initialize Pydantic AI agent
+        # Initialize Pydantic AI agent with structured output
         self.agent = Agent(
             f"{settings.primary_llm}:mistral-large-latest",
+            output_type=STRIDECategoryResult,  # 🔥 STRUCTURED OUTPUT
             system_prompt=self._build_system_prompt(),
         )
 
@@ -134,39 +156,83 @@ Analyze the following component for {category} threats:
 
 {context}
 
-Identify specific {category} threats for this component.
-For each threat:
-1. Provide a clear title and description
-2. Assess severity (critical/high/medium/low)
-3. Identify the attack vector
-4. Map to relevant OWASP category
-5. Provide mitigation recommendations
+Return a STRIDECategoryResult with:
+- category_code: "{code}"
+- category_name: "{category}"
+- threats: list of specific {category} threats for this component
+- summary: brief summary of {category} risks
+- risk_level: overall risk level (low/medium/high/critical)
+
+For each threat provide:
+1. Clear title and description
+2. Severity (critical/high/medium/low)
+3. Attack vector
+4. Relevant OWASP category (use format: A01_BROKEN_ACCESS_CONTROL, A03_INJECTION, etc.)
+5. CWE ID (e.g., CWE-89, CWE-79)
+6. Mitigation recommendation
 """
 
                 result = await self.agent.run(prompt)
 
-                # Parse LLM response into threats
-                # Since we don't have structured output, generate threats based on LLM analysis
-                threats = self._generate_default_threats(code, category, component_type)
+                # Extract structured data from LLM 🔥
+                llm_result: STRIDECategoryResult = result.output
+
+                # Convert LLM threat findings to Threat objects
+                threats = []
+                for finding in llm_result.threats:
+                    # Map severity string to ThreatSeverity enum
+                    severity_map = {
+                        'critical': ThreatSeverity.CRITICAL,
+                        'high': ThreatSeverity.HIGH,
+                        'medium': ThreatSeverity.MEDIUM,
+                        'low': ThreatSeverity.LOW
+                    }
+                    severity = severity_map.get(finding.severity.lower(), ThreatSeverity.MEDIUM)
+
+                    # Map OWASP category
+                    owasp_map = {
+                        'A01_BROKEN_ACCESS_CONTROL': OWASPCategory.A01_BROKEN_ACCESS_CONTROL,
+                        'A02_CRYPTOGRAPHIC_FAILURES': OWASPCategory.A02_CRYPTOGRAPHIC_FAILURES,
+                        'A03_INJECTION': OWASPCategory.A03_INJECTION,
+                        'A04_INSECURE_DESIGN': OWASPCategory.A04_INSECURE_DESIGN,
+                        'A05_SECURITY_MISCONFIGURATION': OWASPCategory.A05_SECURITY_MISCONFIGURATION,
+                        'A07_AUTH_FAILURES': OWASPCategory.A07_AUTH_FAILURES,
+                        'A09_LOGGING_FAILURES': OWASPCategory.A09_LOGGING_FAILURES,
+                    }
+                    owasp_category = owasp_map.get(finding.owasp_category, OWASPCategory.A04_INSECURE_DESIGN)
+
+                    threat = Threat(
+                        title=finding.title,
+                        description=finding.description,
+                        severity=severity,
+                        stride_category=code,
+                        owasp_category=owasp_category,
+                        cwe_id=finding.cwe_id,
+                        cwe_name=finding.cwe_id,
+                        attack_vector=finding.attack_vector,
+                        recommendation=finding.recommendation
+                    )
+                    threats.append(threat)
 
                 analysis = STRIDEAnalysis(
                     category=code,
                     threats=threats,
-                    summary=f"{category} analysis for {component_type}",
-                    risk_level="Medium"
+                    summary=llm_result.summary,
+                    risk_level=llm_result.risk_level
                 )
 
                 results[code] = analysis
 
                 self.logger.info(
-                    "STRIDE category analyzed",
+                    "STRIDE category analyzed using LLM",
                     category=category,
-                    threats_found=len(analysis.threats)
+                    threats_found=len(analysis.threats),
+                    using_llm=True
                 )
 
             except Exception as e:
                 self.logger.error(
-                    "STRIDE analysis failed for category",
+                    "STRIDE analysis failed for category, using fallback",
                     category=category,
                     error=str(e)
                 )

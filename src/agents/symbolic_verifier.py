@@ -461,24 +461,265 @@ class SymbolicVerifier:
 
     def extract_security_features(self, description: str) -> Dict[str, bool]:
         """
-        Extract security features from system description
+        Extract security features from system description with negation handling.
+
+        This is intentionally conservative - it looks for EXPLICIT evidence of security
+        features in the description. This acts as a grounding mechanism to verify
+        what the LLM-based agents claim.
 
         Args:
             description: System description
 
         Returns:
-            Dictionary of detected security features
+            Dictionary of detected security features (True = explicitly mentioned)
         """
         desc_lower = description.lower()
 
+        # Helper function to check for positive mention (not negated)
+        def has_positive_mention(keywords: list, negation_keywords: list = None) -> bool:
+            """Check if keywords are mentioned positively (not in a negative context)"""
+            if negation_keywords is None:
+                negation_keywords = ["no ", "not ", "without ", "lack", "lacking", "missing", "absent", "disabled", "weak", "doesn't", "don't"]
+
+            # Check if any keyword is mentioned
+            has_keyword = any(kw in desc_lower for kw in keywords)
+            if not has_keyword:
+                return False
+
+            # Check if it's in a negative context
+            # Look for negation words near the keyword
+            for kw in keywords:
+                if kw in desc_lower:
+                    # Find position of keyword
+                    idx = desc_lower.find(kw)
+                    # Check 50 characters before the keyword for negation words
+                    context_before = desc_lower[max(0, idx-50):idx]
+
+                    # If negation word found nearby, treat as False
+                    if any(neg in context_before for neg in negation_keywords):
+                        self.logger.debug(
+                            "Negation detected",
+                            feature=kw,
+                            context=context_before[-30:]
+                        )
+                        return False
+
+            return True
+
         features = {
-            "authentication": any(kw in desc_lower for kw in ["authentication", "auth", "login", "password"]),
-            "session_management": any(kw in desc_lower for kw in ["session", "token", "jwt"]),
-            "token_validation": any(kw in desc_lower for kw in ["token", "jwt", "validate"]),
-            "encryption_at_rest": any(kw in desc_lower for kw in ["encrypt", "encryption", "encrypted storage"]),
-            "encryption_in_transit": any(kw in desc_lower for kw in ["tls", "ssl", "https", "encrypt"]),
-            "strong_crypto": any(kw in desc_lower for kw in ["aes", "rsa", "sha256", "bcrypt", "strong"]),
-            "input_validation": any(kw in desc_lower for kw in ["validation", "sanitize", "sanitization", "validate"])
+            "authentication": has_positive_mention(
+                ["authentication", " auth ", "login", "password", "credential"]
+            ),
+            "session_management": has_positive_mention(
+                ["session", "jwt", "oauth", "session management", "session token"]
+            ),
+            "token_validation": has_positive_mention(
+                ["token validation", "jwt", "validate token", "token verify"]
+            ),
+            "encryption_at_rest": has_positive_mention(
+                ["encrypted storage", "encryption at rest", "encrypted database", "aes", "data encryption"]
+            ),
+            "encryption_in_transit": has_positive_mention(
+                ["tls", "ssl", "https", "encrypted channel", "encryption in transit"]
+            ),
+            "strong_crypto": has_positive_mention(
+                ["aes-256", "rsa-2048", "sha256", "sha-256", "bcrypt", "argon2", "strong encryption", "strong crypto"]
+            ),
+            "input_validation": has_positive_mention(
+                ["input validation", "sanitize", "sanitization", "validate input", "parameterized", "prepared statement"]
+            ),
+            "rate_limiting": has_positive_mention(
+                ["rate limit", "rate limiting", "throttle", "throttling"]
+            ),
+            "access_control": has_positive_mention(
+                ["access control", "rbac", "authorization", "permission", "role-based"]
+            ),
+            "logging": has_positive_mention(
+                ["logging", "audit log", "monitoring", "observability"]
+            )
         }
 
+        self.logger.debug(
+            "Extracted security features",
+            features_found={k: v for k, v in features.items() if v}  # Only log True features
+        )
+
         return features
+
+    def extract_z3_variables_from_dfd(self, dfd) -> Dict[str, List[str]]:
+        """
+        Extract Z3 symbolic variables from Data Flow Diagram.
+
+        This is the SMART way - instead of hardcoding sources/sinks,
+        we extract them from the actual DFD built by the LLM!
+
+        Args:
+            dfd: DataFlowDiagram object from DFD Builder Agent
+
+        Returns:
+            Dictionary with:
+            - sources: List of untrusted data sources (external entities)
+            - sinks: List of sensitive operations (processes with DB/commands)
+            - sanitizers: List of processes that sanitize input
+            - roles: List of roles for access control
+            - resources: List of protected resources
+        """
+        self.logger.info("Extracting Z3 variables from DFD")
+
+        # SOURCES: External entities (untrusted input)
+        sources = []
+        for entity in dfd.external_entities:
+            sources.append(entity.name)
+            self.logger.debug(f"Z3 Source (untrusted): {entity.name}")
+
+        # SINKS: Processes that perform sensitive operations
+        sinks = []
+        for process in dfd.processes:
+            # Check if process interacts with sensitive sinks
+            process_name_lower = process.name.lower()
+
+            # Database operations are sinks
+            if any(kw in process_name_lower for kw in ['database', 'db', 'sql', 'query', 'store']):
+                sinks.append(process.name)
+                self.logger.debug(f"Z3 Sink (database): {process.name}")
+
+            # Command execution is a sink
+            if any(kw in process_name_lower for kw in ['command', 'exec', 'shell', 'system']):
+                sinks.append(process.name)
+                self.logger.debug(f"Z3 Sink (command): {process.name}")
+
+            # File operations are sinks
+            if any(kw in process_name_lower for kw in ['file', 'upload', 'download', 'write']):
+                sinks.append(process.name)
+                self.logger.debug(f"Z3 Sink (file): {process.name}")
+
+        # SANITIZERS: Processes that sanitize input (from DFD metadata!)
+        sanitizers = []
+        for process in dfd.processes:
+            if process.sanitizesInput:  # ✅ This comes from DFD!
+                sanitizers.append(process.name)
+                self.logger.debug(f"Z3 Sanitizer: {process.name}")
+
+        # Also check data flows for sanitization
+        for flow in dfd.data_flows:
+            if flow.isFiltered:  # Data flow has input validation/sanitization
+                sanitizers.append(f"flow_{flow.name}")
+                self.logger.debug(f"Z3 Sanitizer (flow): {flow.name}")
+
+        # ROLES: Extract from processes that implement auth/authz
+        roles = set()
+        for process in dfd.processes:
+            if process.implementsAuthentication or process.implementsAuthorization:
+                # Try to extract roles from description
+                desc_lower = process.description.lower()
+                for role in ['admin', 'user', 'guest', 'visitor', 'librarian', 'manager']:
+                    if role in desc_lower:
+                        roles.add(role)
+
+        # RESOURCES: Protected data stores and processes
+        resources = []
+        for data_store in dfd.data_stores:
+            resources.append(data_store.name)
+            self.logger.debug(f"Z3 Resource: {data_store.name}")
+
+        # Add processes that require authorization
+        for process in dfd.processes:
+            if process.implementsAuthorization:
+                resources.append(process.name)
+                self.logger.debug(f"Z3 Resource (process): {process.name}")
+
+        result = {
+            "sources": sources,
+            "sinks": sinks,
+            "sanitizers": sanitizers,
+            "roles": list(roles),
+            "resources": resources
+        }
+
+        self.logger.info(
+            "Z3 variables extracted from DFD",
+            sources=len(sources),
+            sinks=len(sinks),
+            sanitizers=len(sanitizers),
+            roles=len(roles),
+            resources=len(resources)
+        )
+
+        return result
+
+    async def verify_system_security_with_dfd(
+        self,
+        system_description: str,
+        security_features: Dict[str, bool],
+        z3_variables: Dict[str, List[str]]
+    ) -> List[VerificationResult]:
+        """
+        Enhanced verification using ACTUAL Z3 variables extracted from DFD!
+
+        Args:
+            system_description: Description of the system
+            security_features: Dictionary of security features present
+            z3_variables: Extracted variables (sources, sinks, sanitizers, etc.)
+
+        Returns:
+            List of verification results
+        """
+        self.logger.info("Starting Z3 verification with DFD-extracted variables")
+
+        results = []
+
+        # Verify authentication (same as before)
+        auth_result = await self.verify_authentication_invariants(
+            has_authentication=security_features.get("authentication", False),
+            has_session_management=security_features.get("session_management", False),
+            has_token_validation=security_features.get("token_validation", False)
+        )
+        results.append(auth_result)
+
+        # Verify encryption (same as before)
+        encryption_result = await self.verify_encryption_properties(
+            data_at_rest_encrypted=security_features.get("encryption_at_rest", False),
+            data_in_transit_encrypted=security_features.get("encryption_in_transit", False),
+            uses_strong_crypto=security_features.get("strong_crypto", False)
+        )
+        results.append(encryption_result)
+
+        # 🔥 NEW: Verify data flow with ACTUAL extracted variables from DFD
+        if z3_variables.get("sources") and z3_variables.get("sinks"):
+            dataflow_result = await self.verify_data_flow_integrity(
+                sources=z3_variables["sources"],      # ✅ From DFD!
+                sinks=z3_variables["sinks"],          # ✅ From DFD!
+                sanitizers=z3_variables["sanitizers"] # ✅ From DFD!
+            )
+            results.append(dataflow_result)
+            self.logger.info(
+                "Data flow verification using DFD variables",
+                sources=z3_variables["sources"],
+                sinks=z3_variables["sinks"],
+                sanitizers=z3_variables["sanitizers"]
+            )
+
+        # 🔥 NEW: Verify access control with ACTUAL roles and resources
+        if z3_variables.get("roles") and z3_variables.get("resources"):
+            # Build policies from DFD (simplified - could be enhanced)
+            policies = {role: z3_variables["resources"] for role in z3_variables["roles"]}
+
+            access_result = await self.verify_access_control(
+                roles=z3_variables["roles"],          # ✅ From DFD!
+                resources=z3_variables["resources"],  # ✅ From DFD!
+                policies=policies
+            )
+            results.append(access_result)
+            self.logger.info(
+                "Access control verification using DFD variables",
+                roles=z3_variables["roles"],
+                resources=z3_variables["resources"]
+            )
+
+        self.logger.info(
+            "Symbolic verification complete with DFD",
+            total_checks=len(results),
+            verified=sum(1 for r in results if r.verified)
+        )
+
+        return results

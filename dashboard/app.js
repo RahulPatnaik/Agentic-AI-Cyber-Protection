@@ -143,6 +143,9 @@ function displayResults(threatModel) {
     // Display CWE mappings
     displayCWEMappings(threatModel.cwe_references);
 
+    // Display Agentic AI Threats
+    displayAgenticThreats(threatModel.vulnerabilities);
+
     // Display MAESTRO validation
     if (threatModel.agent_analyses && threatModel.agent_analyses.maestro) {
         displayMAESTROValidation(threatModel.agent_analyses.maestro);
@@ -344,6 +347,120 @@ function displayCWEMappings(cweReferences) {
         `;
 
         container.appendChild(cweDiv);
+    });
+}
+
+/**
+ * Display Agentic AI Threats
+ */
+function displayAgenticThreats(vulnerabilities) {
+    const container = document.getElementById('agenticThreats');
+    container.innerHTML = '';
+
+    if (!vulnerabilities || vulnerabilities.length === 0) {
+        container.innerHTML = '<div class="empty-state">NO VULNERABILITIES AVAILABLE</div>';
+        return;
+    }
+
+    // Filter for agentic-specific threats
+    const agenticVulns = vulnerabilities.filter(v =>
+        v.is_agentic_threat ||
+        v.is_mcp_threat ||
+        v.owasp_llm_category ||
+        v.agentic_threat_category ||
+        v.mcp_threat_category
+    );
+
+    if (agenticVulns.length === 0) {
+        container.innerHTML = '<div class="empty-state">NO AGENTIC AI THREATS DETECTED</div>';
+        return;
+    }
+
+    // Count by category
+    const stats = {
+        total: agenticVulns.length,
+        prompt_injection: agenticVulns.filter(v =>
+            v.agentic_threat_category === 'prompt_injection' ||
+            v.owasp_llm_category?.includes('Prompt Injection')
+        ).length,
+        tool_misuse: agenticVulns.filter(v =>
+            v.agentic_threat_category === 'tool_misuse' ||
+            v.mcp_threat_category?.includes('tool_abuse')
+        ).length,
+        mcp_threats: agenticVulns.filter(v => v.is_mcp_threat).length,
+        jailbreaking: agenticVulns.filter(v => v.agentic_threat_category === 'jailbreaking').length
+    };
+
+    // Display stats
+    container.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 8px; padding: 15px; text-align: center;">
+                <div style="font-size: 32px; font-weight: bold; color: #ef4444;">${stats.total}</div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">TOTAL AGENTIC THREATS</div>
+            </div>
+            <div style="background: rgba(249, 115, 22, 0.1); border: 1px solid #f97316; border-radius: 8px; padding: 15px; text-align: center;">
+                <div style="font-size: 32px; font-weight: bold; color: #f97316;">${stats.prompt_injection}</div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">PROMPT INJECTION</div>
+            </div>
+            <div style="background: rgba(234, 179, 8, 0.1); border: 1px solid #eab308; border-radius: 8px; padding: 15px; text-align: center;">
+                <div style="font-size: 32px; font-weight: bold; color: #eab308;">${stats.tool_misuse}</div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">TOOL MISUSE</div>
+            </div>
+            <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid #a855f7; border-radius: 8px; padding: 15px; text-align: center;">
+                <div style="font-size: 32px; font-weight: bold; color: #a855f7;">${stats.mcp_threats}</div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">MCP THREATS</div>
+            </div>
+        </div>
+        <div style="margin-top: 20px;">
+            <h4 style="color: var(--cyan); margin-bottom: 15px; font-size: 14px;">AGENTIC VULNERABILITIES DETECTED:</h4>
+            <div id="agenticVulnsList"></div>
+        </div>
+    `;
+
+    const vulnsList = document.getElementById('agenticVulnsList');
+
+    agenticVulns.forEach((vuln, index) => {
+        const vulnDiv = document.createElement('div');
+        vulnDiv.style.cssText = `
+            background: rgba(0,0,0,0.3);
+            border-left: 4px solid ${vuln.severity === 'critical' ? '#dc2626' : vuln.severity === 'high' ? '#ea580c' : '#f59e0b'};
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        `;
+
+        // Build category badges
+        let badges = '';
+        if (vuln.owasp_llm_category) {
+            badges += `<span style="background: rgba(239, 68, 68, 0.3); padding: 4px 12px; border-radius: 4px; font-size: 11px; margin-right: 8px;">OWASP LLM: ${vuln.owasp_llm_category}</span>`;
+        }
+        if (vuln.agentic_threat_category) {
+            badges += `<span style="background: rgba(249, 115, 22, 0.3); padding: 4px 12px; border-radius: 4px; font-size: 11px; margin-right: 8px;">AGENTIC: ${vuln.agentic_threat_category}</span>`;
+        }
+        if (vuln.mcp_threat_category) {
+            badges += `<span style="background: rgba(168, 85, 247, 0.3); padding: 4px 12px; border-radius: 4px; font-size: 11px; margin-right: 8px;">MCP: ${vuln.mcp_threat_category}</span>`;
+        }
+
+        vulnDiv.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+                <h4 style="margin: 0; color: var(--text-primary); flex: 1;">${index + 1}. ${escapeHtml(vuln.title)}</h4>
+                <span style="background: ${vuln.severity === 'critical' ? '#dc2626' : vuln.severity === 'high' ? '#ea580c' : '#f59e0b'}; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; white-space: nowrap;">${vuln.severity}</span>
+            </div>
+            <div style="margin-bottom: 10px;">
+                ${badges}
+            </div>
+            <p style="color: var(--text-secondary); font-size: 14px; margin: 10px 0;">${escapeHtml(vuln.description)}</p>
+            <div style="margin-top: 10px; padding: 10px; background: rgba(6, 182, 212, 0.1); border-radius: 4px;">
+                <strong style="color: var(--cyan);">Attack Vector:</strong>
+                <p style="color: var(--text-secondary); font-size: 13px; margin: 5px 0;">${escapeHtml(vuln.attack_vector)}</p>
+            </div>
+            <div style="margin-top: 10px; padding: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 4px;">
+                <strong style="color: #22c55e;">Recommendation:</strong>
+                <p style="color: var(--text-secondary); font-size: 13px; margin: 5px 0;">${escapeHtml(vuln.recommendation)}</p>
+            </div>
+        `;
+
+        vulnsList.appendChild(vulnDiv);
     });
 }
 
@@ -731,6 +848,76 @@ function clearFilters() {
     document.getElementById('severityFilter').value = 'all';
     document.getElementById('owaspFilter').value = 'all';
     filterVulnerabilities();
+}
+
+/**
+ * Analyze Local Files/Directory
+ */
+async function analyzeLocalFiles() {
+    const filePath = document.getElementById('localFilePath').value.trim();
+    const recursive = document.getElementById('recursiveAnalysis').checked;
+    const localAnalyzeBtn = document.getElementById('localAnalyzeBtn');
+
+    if (!filePath) {
+        alert('[!] PLEASE ENTER A FILE OR DIRECTORY PATH');
+        return;
+    }
+
+    // Show loading
+    localAnalyzeBtn.disabled = true;
+    localAnalyzeBtn.textContent = 'ANALYZING...';
+    loadingIndicator.classList.remove('hidden');
+    resultsSection.classList.add('hidden');
+
+    // Start progress simulation
+    simulateProgress();
+
+    try {
+        const description = document.getElementById('description').value.trim() ||
+            `Security analysis of local files at: ${filePath}`;
+
+        // Call local file analysis API
+        const response = await fetch(`${API_BASE_URL}/api/analyze/local-file`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                file_path: filePath,
+                description: description,
+                recursive: recursive
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || `API ERROR: ${response.status}`);
+        }
+
+        const result = await response.json();
+        currentModelId = result.model_id;
+
+        // Fetch complete threat model
+        const modelResponse = await fetch(`${API_BASE_URL}/api/models/${currentModelId}`);
+        if (!modelResponse.ok) {
+            throw new Error(`FAILED TO FETCH THREAT MODEL: ${modelResponse.status}`);
+        }
+
+        currentThreatModel = await modelResponse.json();
+
+        // Display results
+        displayResults(currentThreatModel);
+
+        alert(`[OK] LOCAL FILE ANALYSIS COMPLETE\n\nFILES ANALYZED: ${result.summary.files_analyzed}\nVULNERABILITIES: ${result.summary.total_vulnerabilities}`);
+
+    } catch (error) {
+        console.error('Local file analysis failed:', error);
+        alert(`[X] LOCAL FILE ANALYSIS FAILED\n\n${error.message}\n\nMAKE SURE:\n- Path exists and is accessible\n- Path contains code files\n- Backend server is running`);
+    } finally {
+        loadingIndicator.classList.add('hidden');
+        localAnalyzeBtn.disabled = false;
+        localAnalyzeBtn.textContent = 'ANALYZE';
+    }
 }
 
 /**

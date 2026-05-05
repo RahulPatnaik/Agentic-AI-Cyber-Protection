@@ -15,6 +15,7 @@ import asyncio
 import structlog
 from datetime import datetime
 import json
+import os
 
 from src.config import Settings
 from src.parsers.nlp_parser import NLPParser
@@ -854,11 +855,174 @@ async def get_github_actions_workflow():
     }
 
 
+class LocalFileAnalyzeRequest(BaseModel):
+    """Request model for local file/directory analysis"""
+    file_path: str = Field(
+        ...,
+        description="Absolute or relative path to file or directory to analyze"
+    )
+    description: Optional[str] = Field(
+        None,
+        description="Optional description of what the file/code does"
+    )
+    recursive: bool = Field(
+        default=False,
+        description="If path is a directory, analyze all files recursively"
+    )
+
+
 class GitHubFixPRRequest(BaseModel):
     """Request to create PR with automated fixes"""
     repo_owner: str = Field(..., description="GitHub repository owner")
     repo_name: str = Field(..., description="GitHub repository name")
     base_branch: str = Field(default="main", description="Base branch to create PR against")
+
+
+@app.post("/api/analyze/local-file", response_model=AnalyzeResponse, tags=["Analysis"])
+async def analyze_local_file(request: LocalFileAnalyzeRequest):
+    """
+    Analyze local file(s) on the file system for security vulnerabilities.
+
+    This endpoint can analyze:
+    - Single files (.py, .js, .ts, .java, .go, .cpp, etc.)
+    - Entire directories (with recursive option)
+
+    Args:
+        request: Local file analysis request with file path
+
+    Returns:
+        Analysis response with vulnerabilities found in the file(s)
+    """
+    logger.info("Analyzing local file(s)", file_path=request.file_path)
+
+    try:
+        # Resolve the file path
+        file_path = Path(request.file_path)
+
+        # Security check: ensure the path exists
+        if not file_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"File or directory not found: {request.file_path}"
+            )
+
+        files_to_analyze = []
+
+        # Check if it's a file or directory
+        if file_path.is_file():
+            files_to_analyze.append(file_path)
+        elif file_path.is_dir():
+            if request.recursive:
+                # Recursively find all code files
+                code_extensions = {'.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.go',
+                                 '.cpp', '.c', '.h', '.hpp', '.rs', '.rb', '.php',
+                                 '.cs', '.swift', '.kt', '.scala', '.sql', '.sh', '.yaml', '.yml'}
+                for ext in code_extensions:
+                    files_to_analyze.extend(file_path.rglob(f'*{ext}'))
+            else:
+                # Only immediate children
+                code_extensions = {'.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.go',
+                                 '.cpp', '.c', '.h', '.hpp', '.rs', '.rb', '.php',
+                                 '.cs', '.swift', '.kt', '.scala', '.sql', '.sh', '.yaml', '.yml'}
+                for item in file_path.iterdir():
+                    if item.is_file() and item.suffix in code_extensions:
+                        files_to_analyze.append(item)
+
+        if not files_to_analyze:
+            raise HTTPException(
+                status_code=400,
+                detail="No code files found to analyze"
+            )
+
+        logger.info(f"Found {len(files_to_analyze)} file(s) to analyze")
+
+        # Read file contents
+        combined_code = ""
+        file_summaries = []
+
+        for file in files_to_analyze[:20]:  # Limit to 20 files to avoid overwhelming the system
+            try:
+                with open(file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    combined_code += f"\n\n# File: {file.name}\n{content}\n"
+                    file_summaries.append({
+                        "filename": file.name,
+                        "path": str(file),
+                        "size": len(content),
+                        "lines": len(content.splitlines())
+                    })
+            except Exception as e:
+                logger.warning(f"Could not read file {file}: {e}")
+                continue
+
+        if not combined_code:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not read any file contents"
+            )
+
+        # Build description
+        description = request.description or f"Security analysis of local file(s): {', '.join([f.name for f in files_to_analyze[:5]])}"
+
+        # Analyze using the orchestrator
+        threat_model = await orchestrator.analyze_code_snippet(combined_code, description)
+
+        # Add file information to the threat model metadata
+        threat_model.metadata = {
+            "source": "local_filesystem",
+            "files_analyzed": file_summaries,
+            "total_files": len(files_to_analyze),
+            "base_path": str(file_path)
+        }
+
+        # Store in database
+        threat_models_db[threat_model.model_id] = threat_model
+
+        logger.info(
+            "Local file analysis complete",
+            model_id=str(threat_model.model_id),
+            files_count=len(files_to_analyze),
+            vulnerabilities=len(threat_model.vulnerabilities)
+        )
+
+        # Build summary response
+        summary = {
+            "files_analyzed": len(files_to_analyze),
+            "base_path": str(file_path),
+            "total_vulnerabilities": len(threat_model.vulnerabilities),
+            "critical_vulnerabilities": len([
+                v for v in threat_model.vulnerabilities if v.severity.value == "critical"
+            ]),
+            "high_vulnerabilities": len([
+                v for v in threat_model.vulnerabilities if v.severity.value == "high"
+            ]),
+            "top_vulnerabilities": [
+                {
+                    "title": v.title,
+                    "severity": v.severity.value,
+                    "cwe_id": v.cwe_id,
+                    "file": v.vulnerable_code_line,
+                    "risk_score": v.risk_score
+                }
+                for v in threat_model.top_vulnerabilities[:5]
+            ]
+        }
+
+        return AnalyzeResponse(
+            model_id=threat_model.model_id,
+            status="complete",
+            message=f"Local file analysis complete. Analyzed {len(files_to_analyze)} file(s) and found {len(threat_model.top_vulnerabilities)} vulnerabilities.",
+            summary=summary
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Local file analysis failed", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Local file analysis failed: {str(e)}"
+        )
 
 
 @app.post("/api/github/create-fix-pr/{model_id}", tags=["GitHub"])

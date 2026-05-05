@@ -27,6 +27,7 @@ from src.agents.threat_generator import AutomatedThreatGenerator
 from src.agents.stride_agent import STRIDEAgent
 from src.agents.symbolic_verifier import SymbolicVerifier
 from src.agents.cve_scanner import CVEScanner
+from src.agents.agentic_security_agent import AgenticSecurityAnalyzer
 
 logger = structlog.get_logger()
 
@@ -59,8 +60,9 @@ class ThreatModelingOrchestrator:
         self.maestro_validator = MAESTROValidator(settings)
         self.symbolic_verifier = SymbolicVerifier()
         self.cve_scanner = CVEScanner(nvd_api_key=settings.nvd_api_key)
+        self.agentic_analyzer = AgenticSecurityAnalyzer(settings)
 
-        logger.info("Initialized Threat Modeling Orchestrator with 9 agents (DFD, STRIDE, OWASP, Attack Tree, CWE, MAESTRO, Symbolic Verifier, CVE Scanner)")
+        logger.info("Initialized Threat Modeling Orchestrator with 10 agents (DFD, STRIDE, OWASP, Attack Tree, CWE, MAESTRO, Symbolic Verifier, CVE Scanner, Agentic Security)")
 
     async def analyze(self, asset: AssetInput) -> ThreatModel:
         """
@@ -166,8 +168,8 @@ class ThreatModelingOrchestrator:
                 confidence=owasp_analysis.confidence
             )
 
-            # Phase 3: Run remaining agents in parallel (Attack Tree, CWE, MAESTRO, Symbolic Verification)
-            logger.warning("🔷 PHASE 3: Running attack tree, CWE, MAESTRO, and symbolic verification agents in parallel")
+            # Phase 3: Run remaining agents in parallel (Attack Tree, CWE, MAESTRO, Agentic Security, Symbolic Verification)
+            logger.warning("🔷 PHASE 3: Running attack tree, CWE, MAESTRO, agentic security, and symbolic verification agents in parallel")
 
             attack_tree_task = asyncio.create_task(
                 self.attack_tree_analyzer.analyze(asset, vulnerabilities)
@@ -178,18 +180,27 @@ class ThreatModelingOrchestrator:
             maestro_task = asyncio.create_task(
                 self.maestro_validator.analyze(asset, vulnerabilities)
             )
+            agentic_task = asyncio.create_task(
+                self.agentic_analyzer.analyze(asset, vulnerabilities)
+            )
 
-            # Symbolic verification - extract security features from description
+            # Symbolic verification - extract security features AND Z3 variables from DFD
             security_features = self.symbolic_verifier.extract_security_features(asset.description)
+            z3_variables = self.symbolic_verifier.extract_z3_variables_from_dfd(dfd)  # 🔥 NEW!
             symbolic_task = asyncio.create_task(
-                self.symbolic_verifier.verify_system_security(asset.description, security_features)
+                self.symbolic_verifier.verify_system_security_with_dfd(
+                    asset.description,
+                    security_features,
+                    z3_variables  # Pass extracted variables
+                )
             )
 
             # Wait for all agents to complete
-            attack_tree_analysis, cwe_analysis, maestro_analysis, symbolic_verification = await asyncio.gather(
+            attack_tree_analysis, cwe_analysis, maestro_analysis, agentic_analysis, symbolic_verification = await asyncio.gather(
                 attack_tree_task,
                 cwe_task,
                 maestro_task,
+                agentic_task,
                 symbolic_task,
                 return_exceptions=True
             )
@@ -228,9 +239,25 @@ class ThreatModelingOrchestrator:
                     reasoning="Error occurred"
                 )
 
+            if isinstance(agentic_analysis, Exception):
+                logger.error("❌ Agentic security analysis failed", error=str(agentic_analysis), exc_info=True)
+                agentic_analysis = AgentAnalysis(
+                    agent_name="Agentic Security Analyzer",
+                    agent_type="ai_safety",
+                    findings=["Analysis failed"],
+                    vulnerabilities_found=[],
+                    confidence=0.0,
+                    reasoning="Error occurred"
+                )
+
             if isinstance(symbolic_verification, Exception):
                 logger.error("❌ Symbolic verification failed", error=str(symbolic_verification), exc_info=True)
                 symbolic_verification = []
+
+            # Merge agentic vulnerabilities into main list
+            if agentic_analysis and agentic_analysis.vulnerabilities_found:
+                logger.info(f"Adding {len(agentic_analysis.vulnerabilities_found)} agentic-specific vulnerabilities")
+                vulnerabilities.extend(agentic_analysis.vulnerabilities_found)
 
             logger.info("All agent analyses complete")
 
