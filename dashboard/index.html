@@ -9,6 +9,33 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        // Configure Mermaid for larger diagrams
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {
+                darkMode: true,
+                background: '#0a0e1a',
+                primaryColor: '#06b6d4',
+                primaryTextColor: '#e5e7eb',
+                primaryBorderColor: '#334155',
+                lineColor: '#64748b',
+                secondaryColor: '#8b5cf6',
+                tertiaryColor: '#10b981',
+                fontSize: '18px',  // Larger font
+                fontFamily: 'JetBrains Mono, monospace'
+            },
+            flowchart: {
+                nodeSpacing: 80,  // More space between nodes
+                rankSpacing: 100,  // More space between ranks
+                curve: 'basis',
+                padding: 20,
+                useMaxWidth: false,  // Don't constrain width
+                htmlLabels: true
+            }
+        });
+    </script>
 </head>
 <body>
     <!-- Scanline Effect -->
@@ -126,19 +153,24 @@
                     </label>
                     <div class="compliance-grid">
                         <label class="compliance-checkbox">
-                            <input type="checkbox" name="compliance" value="HIPAA">
+                            <input type="checkbox" name="compliance" value="NIST_AI_RMF">
                             <span class="checkbox-custom"></span>
-                            <span class="checkbox-label">HIPAA</span>
+                            <span class="checkbox-label">NIST AI RMF</span>
                         </label>
                         <label class="compliance-checkbox">
-                            <input type="checkbox" name="compliance" value="FDA">
+                            <input type="checkbox" name="compliance" value="OWASP_ASVS">
                             <span class="checkbox-custom"></span>
-                            <span class="checkbox-label">FDA</span>
+                            <span class="checkbox-label">OWASP ASVS</span>
                         </label>
                         <label class="compliance-checkbox">
-                            <input type="checkbox" name="compliance" value="NIST">
+                            <input type="checkbox" name="compliance" value="NIST_800_53">
                             <span class="checkbox-custom"></span>
-                            <span class="checkbox-label">NIST</span>
+                            <span class="checkbox-label">NIST 800-53</span>
+                        </label>
+                        <label class="compliance-checkbox">
+                            <input type="checkbox" name="compliance" value="ISO_27001">
+                            <span class="checkbox-custom"></span>
+                            <span class="checkbox-label">ISO 27001</span>
                         </label>
                         <label class="compliance-checkbox">
                             <input type="checkbox" name="compliance" value="GDPR">
@@ -146,7 +178,12 @@
                             <span class="checkbox-label">GDPR</span>
                         </label>
                         <label class="compliance-checkbox">
-                            <input type="checkbox" name="compliance" value="PCI-DSS">
+                            <input type="checkbox" name="compliance" value="HIPAA">
+                            <span class="checkbox-custom"></span>
+                            <span class="checkbox-label">HIPAA</span>
+                        </label>
+                        <label class="compliance-checkbox">
+                            <input type="checkbox" name="compliance" value="PCI_DSS">
                             <span class="checkbox-custom"></span>
                             <span class="checkbox-label">PCI-DSS</span>
                         </label>
@@ -350,6 +387,11 @@
                 <button class="ops-button secondary" id="exportPdfBtn">
                     <span class="button-bracket">&gt;</span>
                     EXPORT REPORT
+                </button>
+                <button class="ops-button primary" id="downloadComplianceBtn" style="background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);">
+                    <span class="button-bracket">&gt;&gt;</span>
+                    DOWNLOAD COMPLIANCE REPORT
+                    <span class="button-bracket">&lt;&lt;</span>
                 </button>
                 <button class="ops-button secondary" id="newAnalysisBtn">
                     <span class="button-bracket">&gt;</span>

@@ -50,6 +50,16 @@ analyzeForm.addEventListener('submit', handleAnalyzeSubmit);
 newAnalysisBtn.addEventListener('click', handleNewAnalysis);
 exportPdfBtn.addEventListener('click', handleExportPdf);
 
+// Compliance button event listener (added after results are shown)
+function attachComplianceButtonListener() {
+    const downloadComplianceBtn = document.getElementById('downloadComplianceBtn');
+    if (downloadComplianceBtn && !downloadComplianceBtn.dataset.listenerAttached) {
+        downloadComplianceBtn.addEventListener('click', handleDownloadComplianceReport);
+        downloadComplianceBtn.dataset.listenerAttached = 'true';
+        console.log('Compliance button listener attached');
+    }
+}
+
 /**
  * Handle form submission
  */
@@ -153,6 +163,9 @@ function displayResults(threatModel) {
 
     // Show results section
     resultsSection.classList.remove('hidden');
+
+    // Attach compliance button listener now that results are visible
+    attachComplianceButtonListener();
 
     // Scroll to results
     resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -876,6 +889,10 @@ async function analyzeLocalFiles() {
         const description = document.getElementById('description').value.trim() ||
             `Security analysis of local files at: ${filePath}`;
 
+        // Get compliance requirements
+        const complianceCheckboxes = document.querySelectorAll('input[name="compliance"]:checked');
+        const compliance = Array.from(complianceCheckboxes).map(cb => cb.value);
+
         // Call local file analysis API
         const response = await fetch(`${API_BASE_URL}/api/analyze/local-file`, {
             method: 'POST',
@@ -885,7 +902,8 @@ async function analyzeLocalFiles() {
             body: JSON.stringify({
                 file_path: filePath,
                 description: description,
-                recursive: recursive
+                recursive: recursive,
+                compliance_requirements: compliance
             })
         });
 
@@ -1277,5 +1295,37 @@ async function handleDownloadWorkflow() {
 
     } catch (err) {
         alert('[X] FAILED TO DOWNLOAD WORKFLOW\n\n' + err.message);
+    }
+}
+
+/**
+ * Handle download compliance report
+ */
+async function handleDownloadComplianceReport() {
+    console.log('>>> Compliance button clicked!');
+    console.log('>>> Current Model ID:', currentModelId);
+    console.log('>>> Current Threat Model:', currentThreatModel);
+
+    if (!currentModelId) {
+        alert('[!] NO ANALYSIS RESULTS AVAILABLE\n\nRUN A THREAT ANALYSIS WITH COMPLIANCE REQUIREMENTS FIRST');
+        return;
+    }
+
+    if (!currentThreatModel || !currentThreatModel.compliance_checks || currentThreatModel.compliance_checks.length === 0) {
+        alert('[!] NO COMPLIANCE ANALYSIS AVAILABLE\n\nPlease re-run analysis with compliance requirements selected (NIST AI RMF, OWASP ASVS, etc.)');
+        return;
+    }
+
+    try {
+        console.log(`Downloading compliance report for model ${currentModelId}...`);
+
+        // Open compliance report in new window (HTML format)
+        const reportUrl = `${API_BASE_URL}/api/models/${currentModelId}/compliance-report`;
+        window.open(reportUrl, '_blank');
+
+        alert('[OK] COMPLIANCE REPORT OPENED\n\nYou can print to PDF from your browser (Ctrl+P or Cmd+P)');
+
+    } catch (err) {
+        alert('[X] FAILED TO GENERATE COMPLIANCE REPORT\n\n' + err.message);
     }
 }

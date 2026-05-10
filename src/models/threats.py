@@ -264,14 +264,30 @@ class CWEReference(BaseModel):
     references: List[str] = Field(default_factory=list)
 
 
+class CodeFix(BaseModel):
+    """Suggested code fix for compliance violation"""
+    file_path: Optional[str] = None
+    vulnerable_code: Optional[str] = None
+    fixed_code: str
+    explanation: str
+
+
 class ComplianceCheck(BaseModel):
     """Compliance requirement check"""
-    framework: Literal["HIPAA", "FDA", "NIST", "SOC2", "GDPR", "PCI_DSS"]
-    requirement_id: str
-    requirement_description: str
+    framework: Literal["NIST_AI_RMF", "OWASP_ASVS", "NIST_800_53", "ISO_27001", "GDPR", "HIPAA", "PCI_DSS"]
+    control_id: str  # e.g., "SC-8", "ASVS-2.1.1", "AI RMF: MAP-1.1"
+    control_name: str
     status: Literal["compliant", "non_compliant", "partial", "not_applicable"]
-    findings: List[str] = Field(default_factory=list)
-    remediation_needed: bool = False
+
+    # Gap analysis
+    finding: str = ""  # LLM-generated explanation of the violation
+    evidence: List[str] = Field(default_factory=list)  # References to specific threats/vulns
+
+    # Remediation
+    remediation_steps: List[str] = Field(default_factory=list)  # Actionable fixes
+    code_fixes: List[CodeFix] = Field(default_factory=list)  # Code-level suggestions
+    priority: Literal["critical", "high", "medium", "low"] = "medium"
+    estimated_effort: str = ""  # e.g., "2-4 hours", "1 week"
 
 
 class ThreatModel(BaseModel):

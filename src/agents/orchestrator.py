@@ -15,7 +15,8 @@ from src.models.threats import (
     AgentAnalysis,
     Vulnerability,
     AttackPath,
-    CWEReference
+    CWEReference,
+    ComplianceCheck
 )
 from src.config import Settings
 from src.agents.owasp_agent import OWASPAnalyzer
@@ -28,6 +29,7 @@ from src.agents.stride_agent import STRIDEAgent
 from src.agents.symbolic_verifier import SymbolicVerifier
 from src.agents.cve_scanner import CVEScanner
 from src.agents.agentic_security_agent import AgenticSecurityAnalyzer
+from src.agents.compliance_agent import analyze_compliance, generate_compliance_summary
 
 logger = structlog.get_logger()
 
@@ -345,6 +347,59 @@ class ThreatModelingOrchestrator:
                 "cve_scanner": f"CVE enrichment added for {sum(1 for v in vulnerabilities if v.metadata and 'related_cves' in v.metadata)} vulnerabilities"
             }
 
+            # Phase 4: Compliance Analysis (if compliance requirements provided)
+            compliance_checks = []
+            if asset.compliance_requirements:
+                logger.warning(f"🔷 PHASE 4: Running compliance analysis for frameworks: {asset.compliance_requirements}")
+
+                # Build initial threat model for compliance agent
+                temp_threat_model = ThreatModel(
+                    asset_description=asset.description,
+                    component_type=asset.component_type,
+                    vulnerabilities=vulnerabilities,
+                    attack_paths=attack_paths,
+                    threat_actors=[],
+                    cwe_references=cwe_references,
+                    compliance_checks=[],
+                    top_vulnerabilities=top_vulnerabilities,
+                    critical_paths=critical_paths,
+                    analysis_duration_seconds=0,
+                    agent_analyses=agent_analyses,
+                    confidence_score=confidence_score,
+                    threat_graph=threat_graph
+                )
+
+                try:
+                    # Run compliance analysis
+                    compliance_results = await analyze_compliance(
+                        temp_threat_model,
+                        asset.compliance_requirements
+                    )
+
+                    # Flatten all controls from all frameworks
+                    for result in compliance_results:
+                        compliance_checks.extend(result.controls)
+
+                    # Generate summary
+                    compliance_summary = generate_compliance_summary(compliance_results)
+                    logger.info(
+                        "Compliance analysis complete",
+                        frameworks=compliance_summary['frameworks_analyzed'],
+                        total_controls=compliance_summary['total_controls_checked'],
+                        avg_compliance=compliance_summary['average_compliance_score']
+                    )
+
+                    # Add compliance analysis to agent analyses
+                    agent_analyses["compliance"] = (
+                        f"Analyzed {compliance_summary['total_controls_checked']} controls across "
+                        f"{compliance_summary['total_frameworks']} frameworks. "
+                        f"Average compliance: {compliance_summary['average_compliance_score']}%. "
+                        f"Critical gaps: {compliance_summary['priority_breakdown']['critical']}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error during compliance analysis: {e}")
+
             # Calculate analysis duration
             duration = time.time() - start_time
 
@@ -356,7 +411,7 @@ class ThreatModelingOrchestrator:
                 attack_paths=attack_paths,
                 threat_actors=[],  # Can be enhanced with threat actor profiling
                 cwe_references=cwe_references,
-                compliance_checks=[],  # Can be enhanced with compliance checking
+                compliance_checks=compliance_checks,
                 top_vulnerabilities=top_vulnerabilities,
                 critical_paths=critical_paths,
                 analysis_duration_seconds=duration,
@@ -371,6 +426,7 @@ class ThreatModelingOrchestrator:
                 total_vulnerabilities=len(vulnerabilities),
                 top_vulnerabilities=len(top_vulnerabilities),
                 attack_paths=len(attack_paths),
+                compliance_checks=len(compliance_checks),
                 confidence=confidence_score
             )
 
@@ -475,13 +531,14 @@ class ThreatModelingOrchestrator:
 
         return round(weighted_sum, 2)
 
-    async def analyze_code_snippet(self, code: str, description: str = "") -> ThreatModel:
+    async def analyze_code_snippet(self, code: str, description: str = "", compliance_requirements: List[str] = None) -> ThreatModel:
         """
         Analyze a code snippet for vulnerabilities.
 
         Args:
             code: Code snippet to analyze
             description: Optional description of what the code does
+            compliance_requirements: Optional list of compliance frameworks to check
 
         Returns:
             ThreatModel with code-specific vulnerabilities
@@ -494,7 +551,8 @@ class ThreatModelingOrchestrator:
             code_snippet=code,
             component_type=None,  # Will be inferred
             programming_languages=[],
-            frameworks=[]
+            frameworks=[],
+            compliance_requirements=compliance_requirements or []
         )
 
         return await self.analyze(asset)

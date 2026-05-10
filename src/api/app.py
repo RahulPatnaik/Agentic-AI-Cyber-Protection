@@ -5,7 +5,7 @@ Main API server for Agentic Threat Modeling System
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -22,6 +22,7 @@ from src.parsers.nlp_parser import NLPParser
 from src.agents.orchestrator import ThreatModelingOrchestrator
 from src.models.threats import ThreatModel, AssetInput
 from src.integrations.github_integration import GitHubIntegration
+from src.utils.compliance_report_generator import generate_compliance_html_report
 
 # Initialize logger
 logger = structlog.get_logger()
@@ -286,6 +287,44 @@ async def get_attack_paths(model_id: UUID):
         "attack_paths": threat_model.attack_paths,
         "critical_paths": threat_model.critical_paths
     }
+
+
+@app.get("/api/models/{model_id}/compliance-report", response_class=HTMLResponse, tags=["Compliance"])
+async def get_compliance_report(model_id: UUID):
+    """
+    Generate and download a comprehensive compliance report in HTML format.
+    Can be printed to PDF from browser.
+
+    Args:
+        model_id: UUID of the threat model
+
+    Returns:
+        HTML compliance report
+    """
+    logger.info("Generating compliance report", model_id=str(model_id))
+
+    if model_id not in threat_models_db:
+        raise HTTPException(status_code=404, detail="Threat model not found")
+
+    threat_model = threat_models_db[model_id]
+
+    if not threat_model.compliance_checks:
+        raise HTTPException(
+            status_code=400,
+            detail="No compliance analysis performed for this threat model. Please re-run analysis with compliance requirements."
+        )
+
+    try:
+        # Generate HTML report
+        html_content = generate_compliance_html_report(threat_model)
+        return HTMLResponse(content=html_content)
+
+    except Exception as e:
+        logger.error("Error generating compliance report", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate compliance report: {str(e)}"
+        )
 
 
 @app.get("/api/models/{model_id}/graph", tags=["Models"])
@@ -869,6 +908,10 @@ class LocalFileAnalyzeRequest(BaseModel):
         default=False,
         description="If path is a directory, analyze all files recursively"
     )
+    compliance_requirements: List[str] = Field(
+        default_factory=list,
+        description="Compliance frameworks to check (NIST_AI_RMF, OWASP_ASVS, NIST_800_53, etc.)"
+    )
 
 
 class GitHubFixPRRequest(BaseModel):
@@ -964,8 +1007,12 @@ async def analyze_local_file(request: LocalFileAnalyzeRequest):
         # Build description
         description = request.description or f"Security analysis of local file(s): {', '.join([f.name for f in files_to_analyze[:5]])}"
 
-        # Analyze using the orchestrator
-        threat_model = await orchestrator.analyze_code_snippet(combined_code, description)
+        # Analyze using the orchestrator with compliance requirements
+        threat_model = await orchestrator.analyze_code_snippet(
+            combined_code,
+            description,
+            compliance_requirements=request.compliance_requirements
+        )
 
         # Add file information to the threat model metadata
         threat_model.metadata = {

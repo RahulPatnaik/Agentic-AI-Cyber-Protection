@@ -612,12 +612,16 @@ body {
     border: 1px solid var(--ops-border);
     padding: 2rem;
     overflow-x: auto;
+    min-height: 600px; /* Increase minimum height */
 }
 
 .mermaid-container .mermaid {
     display: flex;
     justify-content: center;
     font-family: var(--font-mono) !important;
+    transform: scale(1.3); /* Make diagrams 30% bigger */
+    transform-origin: top center;
+    margin: 20px 0; /* Add margin for scaled content */
 }
 
 /* Vulnerabilities List */

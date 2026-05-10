@@ -267,7 +267,12 @@ class DFDBuilder:
                 for i, vuln in enumerate(vulnerabilities[:10]):  # Show top 10 vulnerabilities
                     vuln_id = f"vuln{i}"
                     severity_emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}.get(vuln.severity.value, '⚪')
-                    vuln_label = f"{severity_emoji} {vuln.title[:30]}"
+
+                    # Safely truncate title and escape special chars for Mermaid
+                    title_truncated = vuln.title[:40] if len(vuln.title) > 40 else vuln.title
+                    # Remove special characters that break Mermaid syntax
+                    title_clean = title_truncated.replace('"', "'").replace('[', '(').replace(']', ')').replace('{', '(').replace('}', ')')
+                    vuln_label = f"{severity_emoji} {title_clean}"
                     mermaid_code += f'    {vuln_id}["{vuln_label}"]\n'
 
                     # Connect vulnerability to affected component (processes or data stores)
