@@ -8,6 +8,10 @@ from typing import List, Dict
 from datetime import datetime
 import time
 import structlog
+from dotenv import load_dotenv
+
+# Load environment variables before importing agents
+load_dotenv()
 
 from src.models.threats import (
     AssetInput,
@@ -290,8 +294,14 @@ class ThreatModelingOrchestrator:
                 except Exception as e:
                     logger.warning("⚠️ CVE enrichment failed for vulnerability", vuln_title=vuln.title, error=str(e))
 
-            # Generate attack paths
-            attack_paths = self.attack_tree_analyzer._generate_attack_paths(asset, vulnerabilities)
+            # Use attack paths from the LLM analysis if available
+            if attack_tree_analysis and hasattr(attack_tree_analysis, 'analysis_metadata') and attack_tree_analysis.analysis_metadata:
+                attack_paths = attack_tree_analysis.analysis_metadata.get('attack_paths', [])
+                logger.info(f"Using {len(attack_paths)} LLM-generated attack paths")
+            else:
+                # Fallback to hardcoded paths only if LLM analysis failed
+                logger.warning("No LLM attack paths available, using hardcoded fallback")
+                attack_paths = self.attack_tree_analyzer._generate_attack_paths(asset, vulnerabilities)
 
             # Generate CWE references
             cwe_references = self.cwe_analyzer._generate_cwe_references(asset, vulnerabilities)

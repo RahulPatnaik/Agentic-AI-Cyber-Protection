@@ -782,6 +782,13 @@ class GitHubPRCommentRequest(BaseModel):
     model_id: UUID = Field(..., description="Threat model ID to comment about")
 
 
+@app.get("/api/test-debug", tags=["Debug"])
+async def test_debug():
+    """Test endpoint to verify server is updating"""
+    print("TEST DEBUG ENDPOINT CALLED!")
+    return {"message": "Debug endpoint working", "timestamp": datetime.now().isoformat()}
+
+
 @app.post("/api/github/create-issue/{model_id}", tags=["GitHub"])
 async def create_github_issue(
     model_id: UUID,
@@ -797,8 +804,34 @@ async def create_github_issue(
     Returns:
         Issue URL if successful
     """
+    # Debug logging with print statements to ensure visibility
+    print(f"\n=== GitHub Issue Creation Debug ===")
+    print(f"Requested model_id: {model_id}")
+    print(f"Models in database: {list(str(k) for k in threat_models_db.keys())}")
+    print(f"Repository: {request.repo_owner}/{request.repo_name}")
+    print(f"Vulnerability title: {request.vulnerability_title}")
+    print(f"Model exists: {model_id in threat_models_db}")
+    print("===================================\n")
+
+    logger.info(
+        "GitHub issue creation request",
+        model_id=str(model_id),
+        repo_owner=request.repo_owner,
+        repo_name=request.repo_name,
+        vulnerability_title=request.vulnerability_title,
+        models_in_db=list(str(k) for k in threat_models_db.keys())
+    )
+
     if model_id not in threat_models_db:
-        raise HTTPException(status_code=404, detail="Threat model not found")
+        logger.error(
+            "Threat model not found in database",
+            model_id=str(model_id),
+            available_models=list(str(k) for k in threat_models_db.keys())
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Threat model {model_id} not found. Available models: {list(str(k) for k in threat_models_db.keys())}"
+        )
 
     threat_model = threat_models_db[model_id]
 
@@ -810,9 +843,24 @@ async def create_github_issue(
             break
 
     if not vulnerability:
-        raise HTTPException(status_code=404, detail="Vulnerability not found")
+        available_vulns = [v.title for v in threat_model.vulnerabilities]
+        logger.error(
+            "Vulnerability not found",
+            requested=request.vulnerability_title,
+            available=available_vulns
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Vulnerability '{request.vulnerability_title}' not found. Available: {available_vulns}"
+        )
 
     try:
+        logger.info(
+            "Calling GitHub integration",
+            repo=f"{request.repo_owner}/{request.repo_name}",
+            vulnerability=vulnerability.title
+        )
+
         issue_url = await github_integration.create_issue_from_vulnerability(
             repo_owner=request.repo_owner,
             repo_name=request.repo_name,
@@ -820,17 +868,27 @@ async def create_github_issue(
         )
 
         if issue_url:
+            logger.info("GitHub issue created successfully", issue_url=issue_url)
             return {
                 "success": True,
                 "issue_url": issue_url,
                 "message": "GitHub issue created successfully"
             }
         else:
-            raise HTTPException(status_code=500, detail="Failed to create GitHub issue")
+            logger.error("GitHub integration returned None")
+            raise HTTPException(
+                status_code=500,
+                detail="GitHub API returned no issue URL - check permissions and token"
+            )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("GitHub issue creation failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("GitHub issue creation failed", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"GitHub API error: {str(e)}"
+        )
 
 
 @app.post("/api/github/comment-pr", tags=["GitHub"])
@@ -1125,6 +1183,11 @@ async def create_fix_pr(
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
+    print("\n" + "="*60)
+    print("STARTING AGENTIC THREAT MODELING SYSTEM v4.1.0")
+    print("DEBUG MODE ENABLED - GitHub Issue Creation Fixed")
+    print("File: src/api/app.py")
+    print("="*60 + "\n")
     logger.info("Starting Agentic Threat Modeling System")
     logger.info("Mistral API configured", api_key_set=bool(settings.mistral_api_key))
     logger.info("GitHub integration configured", github_token_set=bool(github_integration.github_token))

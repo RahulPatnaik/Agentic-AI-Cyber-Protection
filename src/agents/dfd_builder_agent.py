@@ -28,7 +28,7 @@ logger = structlog.get_logger()
 
 # DFD Builder Agent
 dfd_builder_agent = Agent(
-    'mistral:mistral-large-latest',
+    'mistral:mistral-small-latest',
     system_prompt="""You are an expert system architect specializing in Data Flow Diagram (DFD) modeling for threat analysis.
 
 Your role is to analyze system descriptions and create structured DFD components:
@@ -261,24 +261,37 @@ class DFDBuilder:
 
                 mermaid_code += f"    {flow.source_id.hex[:8]} {arrow}|{label}| {flow.destination_id.hex[:8]}\n"
 
-            # NEW: Add vulnerability nodes if provided
+            # Add vulnerabilities - show TOP 10 for better visibility
             if vulnerabilities:
-                mermaid_code += "\n    %% Vulnerabilities\n"
-                for i, vuln in enumerate(vulnerabilities[:10]):  # Show top 10 vulnerabilities
-                    vuln_id = f"vuln{i}"
-                    severity_emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}.get(vuln.severity.value, '⚪')
+                # Sort by severity and take top 10 (more than 3, but not overwhelming)
+                top_vulns = sorted(
+                    vulnerabilities,
+                    key=lambda v: {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}.get(v.severity.value, 0),
+                    reverse=True
+                )[:10]
 
-                    # Safely truncate title and escape special chars for Mermaid
-                    title_truncated = vuln.title[:40] if len(vuln.title) > 40 else vuln.title
-                    # Remove special characters that break Mermaid syntax
-                    title_clean = title_truncated.replace('"', "'").replace('[', '(').replace(']', ')').replace('{', '(').replace('}', ')')
-                    vuln_label = f"{severity_emoji} {title_clean}"
-                    mermaid_code += f'    {vuln_id}["{vuln_label}"]\n'
+                if top_vulns:
+                    mermaid_code += "\n    %% Vulnerabilities\n"
+                    for i, vuln in enumerate(top_vulns):
+                        vuln_id = f"vuln{i}"
 
-                    # Connect vulnerability to affected component (processes or data stores)
-                    # Link to first process by default (can be improved)
-                    if dfd.processes:
-                        mermaid_code += f"    {dfd.processes[0].id.hex[:8]} -.->|vulnerable to| {vuln_id}\n"
+                        # NO TRUNCATION - show full title
+                        title_clean = vuln.title.replace('"', "'").replace('[', '(').replace(']', ')')
+
+                        # Severity indicator
+                        if vuln.severity.value == 'critical':
+                            vuln_label = f"[CRITICAL] {title_clean}"
+                        elif vuln.severity.value == 'high':
+                            vuln_label = f"[HIGH] {title_clean}"
+                        else:
+                            vuln_label = f"[{vuln.severity.value.upper()}] {title_clean}"
+
+                        mermaid_code += f'    {vuln_id}["{vuln_label}"]\n'
+
+                        # Connect to process (cycle through if more vulns than processes)
+                        if dfd.processes:
+                            process_idx = i % len(dfd.processes)
+                            mermaid_code += f"    {dfd.processes[process_idx].id.hex[:8]} -.-> {vuln_id}\n"
 
             # Style critical components
             for entity in dfd.external_entities:
@@ -289,18 +302,16 @@ class DFDBuilder:
                 if not flow.isEncrypted and flow.carries_pii:
                     mermaid_code += f"    linkStyle {dfd.data_flows.index(flow)} stroke:#ff4444,stroke-width:3px\n"
 
-            # Style vulnerability nodes by severity
-            if vulnerabilities:
-                for i, vuln in enumerate(vulnerabilities[:10]):
+            # Style vulnerability nodes by severity (top 10)
+            if vulnerabilities and top_vulns:
+                for i, vuln in enumerate(top_vulns):
                     vuln_id = f"vuln{i}"
-                    color_map = {
-                        'critical': '#990000',
-                        'high': '#ff6600',
-                        'medium': '#ffcc00',
-                        'low': '#66cc66'
-                    }
-                    color = color_map.get(vuln.severity.value, '#cccccc')
-                    mermaid_code += f"    style {vuln_id} fill:{color},stroke:{color},color:#fff\n"
+                    if vuln.severity.value == 'critical':
+                        mermaid_code += f"    style {vuln_id} fill:#ff0000,stroke:#ff0000,color:#fff\n"
+                    elif vuln.severity.value == 'high':
+                        mermaid_code += f"    style {vuln_id} fill:#ff6600,stroke:#ff6600,color:#fff\n"
+                    else:
+                        mermaid_code += f"    style {vuln_id} fill:#ffcc00,stroke:#333,color:#000\n"
 
             logger.warning("✅ Generated Enhanced Mermaid DFD with vulnerabilities")
             logger.warning(f"📊 Mermaid code (first 500 chars):\n{mermaid_code[:500]}")

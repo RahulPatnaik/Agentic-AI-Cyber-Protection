@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     # LLM Configuration
     mistral_api_key: str = ""
+    cerebras_api_key: str = ""
+    sambanova_api_key: str = ""
     primary_llm: str = "mistral"
 
     # Database

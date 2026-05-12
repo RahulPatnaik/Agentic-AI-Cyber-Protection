@@ -4,7 +4,7 @@ Comprehensive data structures for agentic threat analysis
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Literal
+from typing import Optional, List, Dict, Literal, Any
 from enum import Enum
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -337,3 +337,6 @@ class AgentAnalysis(BaseModel):
     # Formal verification (for symbolic verifier)
     formal_proofs: Optional[List[str]] = None
     z3_constraints: Optional[str] = None
+
+    # Additional metadata for storing agent-specific data (like attack paths)
+    analysis_metadata: Optional[Dict[str, Any]] = None

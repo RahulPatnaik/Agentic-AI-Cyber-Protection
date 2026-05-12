@@ -43,7 +43,7 @@ class AttackTreeResult(BaseModel):
 
 # Define the Attack Tree Agent with structured output
 attack_tree_agent = Agent(
-    'mistral:mistral-large-latest',
+    'mistral:mistral-small-latest',
     output_type=AttackTreeResult,  # 🔥 STRUCTURED OUTPUT
     system_prompt="""You are an expert attack path analyst specializing in constructing attack trees and threat scenarios for traditional systems AND agentic AI systems.
 
@@ -160,15 +160,45 @@ class AttackTreeAnalyzer:
                 ],
                 vulnerabilities_found=[],  # Attack tree doesn't find new vulns
                 confidence=0.95,  # Higher confidence with LLM
-                reasoning=llm_result.summary
+                reasoning=llm_result.summary,
+                analysis_metadata={
+                    "attack_paths": attack_paths,
+                    "using_llm": True,
+                    "provider": "primary"
+                }
             )
 
         except Exception as e:
-            logger.error("Attack tree analysis failed, using fallback", error=str(e))
-            # Fallback to rule-based method
+            logger.error("Attack tree analysis failed, trying fallback provider", error=str(e))
+
+            # Try SambaNova as fallback before using hardcoded
+            if "429" in str(e) or "rate" in str(e).lower():
+                try:
+                    logger.info("Primary provider rate limited, trying SambaNova")
+                    from src.agents.sambanova_integration import SambaNovaClient
+                    samba_client = SambaNovaClient()
+                    response = samba_client.complete(prompt)
+                    attack_paths = self._parse_llm_response(response)
+                    logger.info("Attack tree analysis complete using SambaNova fallback",
+                               attack_paths_generated=len(attack_paths), using_llm=True)
+                    return AgentAnalysis(
+                        agent_name="Attack Tree Analyzer",
+                        vulnerabilities=[],
+                        confidence_score=0.85,
+                        analysis_metadata={
+                            "attack_paths": attack_paths,
+                            "using_llm": True,
+                            "provider": "sambanova_fallback"
+                        }
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"SambaNova fallback also failed: {fallback_error}")
+
+            # Only use hardcoded as last resort
+            logger.warning("All LLM providers failed, using hardcoded templates (NOT RECOMMENDED)")
             attack_paths = self._generate_attack_paths(asset, vulnerabilities)
             logger.info(
-                "Using fallback attack path generation",
+                "Using hardcoded attack path templates",
                 attack_paths_generated=len(attack_paths),
                 using_llm=False
             )

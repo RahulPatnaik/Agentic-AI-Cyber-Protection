@@ -40,7 +40,7 @@ class CWEAnalysisResult(BaseModel):
 
 # Define the CWE Analyzer Agent with structured output
 cwe_agent = Agent(
-    'mistral:mistral-large-latest',
+    'mistral:mistral-small-latest',
     output_type=CWEAnalysisResult,  # 🔥 STRUCTURED OUTPUT
     system_prompt="""You are an expert CWE (Common Weakness Enumeration) analyst with deep knowledge of software weaknesses.
 
@@ -228,30 +228,71 @@ Focus on:
         cwe_refs = []
 
         for vuln in vulnerabilities:
-            # Clean CWE ID - extract just "CWE-XXX" part
-            # Handle cases like "CWE-89: SQL Injection" or "CWE-89"
-            cwe_id_clean = vuln.cwe_id.split(':')[0].strip() if ':' in vuln.cwe_id else vuln.cwe_id
+            # Clean and normalize CWE ID - extract just "CWE-XXX" part
+            # Handle cases like "CWE-89: SQL Injection", "CWEs-798", "CW-319", or "Cwe-89"
+            cwe_id_raw = vuln.cwe_id.split(':')[0].strip() if ':' in vuln.cwe_id else vuln.cwe_id
+
+            # Remove any quotes or special characters that shouldn't be there
+            cwe_id_raw = cwe_id_raw.replace('"', '').replace("'", '').strip()
+
+            # Skip empty or whitespace-only CWE IDs
+            if not cwe_id_raw or cwe_id_raw.isspace():
+                logger.warning(f"Skipping vulnerability with empty CWE ID: '{vuln.title}'")
+                continue
+
+            # Convert to uppercase for consistent handling
+            cwe_id_raw = cwe_id_raw.upper()
+
+            # Fix common typos
+            if cwe_id_raw.startswith('CW-'):
+                # CW-319 -> CWE-319
+                cwe_id_raw = 'CWE-' + cwe_id_raw[3:]
+            elif cwe_id_raw.startswith('CWES-'):
+                # CWEs-798 -> CWE-798
+                cwe_id_raw = 'CWE-' + cwe_id_raw[5:]
+            elif not cwe_id_raw.startswith('CWE-'):
+                # CWE89 -> CWE-89
+                cwe_id_raw = cwe_id_raw.replace('CWE', 'CWE-')
+
+            # Extract just the CWE-XXX part using regex
+            import re
+            match = re.match(r'(CWE-\d+)', cwe_id_raw)
+            if match:
+                cwe_id_clean = match.group(1)
+            else:
+                # If no valid CWE pattern found, skip this vulnerability
+                logger.warning(f"Invalid CWE ID format: '{vuln.cwe_id}' (normalized to '{cwe_id_raw}')")
+                continue
 
             # Get CWE details from database
             cwe_details = self.cwe_database.get(cwe_id_clean, {})
 
-            cwe_ref = CWEReference(
-                cwe_id=cwe_id_clean,
-                cwe_name=vuln.cwe_name,
-                description=cwe_details.get('description', vuln.description),
-                likelihood=vuln.likelihood,
-                severity=vuln.severity,
-                owasp_mapping=vuln.owasp_category,
-                affected_languages=asset.programming_languages,
-                affected_frameworks=asset.frameworks,
-                maestro_violations=self._identify_maestro_violations(vuln),
-                mitigation_strategies=vuln.remediation_steps,
-                references=[
-                    f"https://cwe.mitre.org/data/definitions/{cwe_id_clean.split('-')[1]}.html",
-                    f"OWASP: {vuln.owasp_category.value}"
-                ]
-            )
-            cwe_refs.append(cwe_ref)
+            try:
+                # Validate CWE ID format
+                if not cwe_id_clean or not cwe_id_clean.startswith('CWE-'):
+                    logger.warning(f"Invalid CWE ID format: {vuln.cwe_id}, skipping")
+                    continue
+
+                cwe_ref = CWEReference(
+                    cwe_id=cwe_id_clean,
+                    cwe_name=vuln.cwe_name,
+                    description=cwe_details.get('description', vuln.description),
+                    likelihood=vuln.likelihood,
+                    severity=vuln.severity,
+                    owasp_mapping=vuln.owasp_category,
+                    affected_languages=asset.programming_languages,
+                    affected_frameworks=asset.frameworks,
+                    maestro_violations=self._identify_maestro_violations(vuln),
+                    mitigation_strategies=vuln.remediation_steps,
+                    references=[
+                        f"https://cwe.mitre.org/data/definitions/{cwe_id_clean.split('-')[1]}.html",
+                        f"OWASP: {vuln.owasp_category.value}"
+                    ]
+                )
+                cwe_refs.append(cwe_ref)
+            except Exception as e:
+                logger.error(f"Failed to create CWE reference for {vuln.cwe_id}: {e}")
+                continue
 
         return cwe_refs
 

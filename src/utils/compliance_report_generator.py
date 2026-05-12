@@ -281,7 +281,7 @@ def generate_compliance_html_report(threat_model: ThreatModel) -> str:
         }}
 
         .evidence-item:before {{
-            content: "⚠";
+            content: "!";
             position: absolute;
             left: 0;
         }}
@@ -409,7 +409,7 @@ def generate_compliance_html_report(threat_model: ThreatModel) -> str:
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔒 Security Compliance Report</h1>
+            <h1>Security Compliance Report</h1>
             <div class="meta">
                 <strong>Generated:</strong> {datetime.now().strftime('%B %d, %Y at %H:%M UTC')}<br>
                 <strong>Report ID:</strong> {threat_model.model_id}<br>
@@ -418,7 +418,7 @@ def generate_compliance_html_report(threat_model: ThreatModel) -> str:
         </div>
 
         <div class="executive-summary">
-            <h2>📊 Executive Summary</h2>
+            <h2>Executive Summary</h2>
             <p>
                 This compliance assessment analyzed <strong>{total_controls} security controls</strong> across
                 <strong>{len(frameworks)} compliance frameworks</strong>. The overall compliance rate is
@@ -451,7 +451,7 @@ def generate_compliance_html_report(threat_model: ThreatModel) -> str:
     if critical_gaps:
         html += """
         <div class="critical-gaps">
-            <h2>🚨 Critical Gaps Requiring Immediate Action</h2>
+            <h2>Critical Gaps Requiring Immediate Action</h2>
 """
         for gap in critical_gaps:
             html += f"""
@@ -516,7 +516,7 @@ def generate_compliance_html_report(threat_model: ThreatModel) -> str:
             if control.remediation_steps:
                 html += """
                     <div class="remediation">
-                        <h4>🔧 Remediation Steps:</h4>
+                        <h4>Remediation Steps:</h4>
                         <ol class="remediation-steps">
 """
                 for step in control.remediation_steps:
@@ -528,7 +528,7 @@ def generate_compliance_html_report(threat_model: ThreatModel) -> str:
 """
                 if control.estimated_effort:
                     html += f"""
-                        <div class="effort">⏱️ Estimated effort: {control.estimated_effort}</div>
+                        <div class="effort">Estimated effort: {control.estimated_effort}</div>
 """
                 html += """
                     </div>
@@ -538,7 +538,7 @@ def generate_compliance_html_report(threat_model: ThreatModel) -> str:
                 for code_fix in control.code_fixes:
                     html += f"""
                     <div class="code-fix">
-                        <h5>💻 Code Fix: {code_fix.explanation}</h5>
+                        <h5>Code Fix: {code_fix.explanation}</h5>
 """
                     if code_fix.file_path:
                         html += f"""

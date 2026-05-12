@@ -133,16 +133,35 @@ Generated with [Agentic Threat Modeling](https://github.com/yourusername/agentic
                         return issue_url
                     else:
                         error_text = await response.text()
+                        error_json = None
+                        try:
+                            error_json = await response.json()
+                        except:
+                            pass
+
                         self.logger.error(
                             "Failed to create GitHub issue",
                             status=response.status,
-                            error=error_text
+                            error_text=error_text,
+                            error_json=error_json,
+                            repo=f"{repo_owner}/{repo_name}"
                         )
-                        return None
+
+                        # Provide specific error messages
+                        if response.status == 404:
+                            raise Exception(f"Repository {repo_owner}/{repo_name} not found or not accessible")
+                        elif response.status == 403:
+                            raise Exception(f"Permission denied. Check GitHub token permissions for {repo_owner}/{repo_name}")
+                        elif response.status == 401:
+                            raise Exception("Invalid GitHub token. Please check your GITHUB_TOKEN environment variable")
+                        elif response.status == 422:
+                            raise Exception(f"Invalid request data: {error_text}")
+                        else:
+                            raise Exception(f"GitHub API error {response.status}: {error_text}")
 
         except Exception as e:
             self.logger.error("GitHub API error", error=str(e))
-            return None
+            raise  # Re-raise the exception to be handled by the API endpoint
 
     async def comment_on_pr(
         self,
@@ -398,9 +417,69 @@ Generated with [Agentic Threat Modeling](https://github.com/yourusername/agentic
                             error_text = await response.text()
                             self.logger.warning("Failed to update branch", error=error_text)
 
-                # Generate fix files for each vulnerability
-                fixes_applied = []
+                # Apply security comments to actual code files
+                files_modified = []
                 for vuln in vulnerabilities[:5]:  # Fix top 5 vulnerabilities
+                    # Extract file path from metadata or affected_component
+                    file_path = None
+                    if vuln.metadata and 'file_path' in vuln.metadata:
+                        file_path = vuln.metadata['file_path']
+                    elif vuln.metadata and 'file_name' in vuln.metadata:
+                        file_path = vuln.metadata['file_name']
+
+                    if file_path:
+                        # Get the current file content
+                        try:
+                            async with session.get(
+                                f"{self.base_url}/repos/{repo_owner}/{repo_name}/contents/{file_path}?ref={base_branch}",
+                                headers=headers,
+                                timeout=aiohttp.ClientTimeout(total=30)
+                            ) as response:
+                                if response.status == 200:
+                                    file_data = await response.json()
+                                    import base64
+                                    content = base64.b64decode(file_data['content']).decode('utf-8')
+
+                                    # Add security warning comment
+                                    security_comment = self._generate_security_comment(vuln)
+
+                                    # Insert comment at the vulnerable line or at the top if line not specified
+                                    if vuln.vulnerable_code_line and vuln.vulnerable_code_line > 0:
+                                        lines = content.split('\n')
+                                        # Insert comment before the vulnerable line
+                                        insert_line = min(vuln.vulnerable_code_line - 1, len(lines))
+                                        lines.insert(insert_line, security_comment)
+                                        modified_content = '\n'.join(lines)
+                                    else:
+                                        # Add comment at the top of the file
+                                        modified_content = f"{security_comment}\n\n{content}"
+
+                                    # Commit the modified file to the new branch
+                                    encoded_content = base64.b64encode(modified_content.encode()).decode()
+                                    async with session.put(
+                                        f"{self.base_url}/repos/{repo_owner}/{repo_name}/contents/{file_path}",
+                                        headers=headers,
+                                        json={
+                                            "message": f"Add security warning for: {vuln.title}",
+                                            "content": encoded_content,
+                                            "sha": file_data['sha'],
+                                            "branch": branch_name
+                                        },
+                                        timeout=aiohttp.ClientTimeout(total=30)
+                                    ) as response:
+                                        if response.status in [200, 201]:
+                                            files_modified.append({
+                                                "file": file_path,
+                                                "vulnerability": vuln.title,
+                                                "line": vuln.vulnerable_code_line
+                                            })
+                                            self.logger.info(f"Added security comment to {file_path}")
+                        except Exception as e:
+                            self.logger.warning(f"Could not modify {file_path}: {e}")
+
+                # Also create a summary file
+                fixes_applied = []
+                for vuln in vulnerabilities[:5]:
                     fix_content = self._generate_fix_code(vuln)
                     if fix_content:
                         fixes_applied.append({
@@ -408,7 +487,6 @@ Generated with [Agentic Threat Modeling](https://github.com/yourusername/agentic
                             "fix": fix_content
                         })
 
-                # Create a summary file for the fixes
                 fix_summary = self._build_fix_summary(vulnerabilities[:5], fixes_applied)
 
                 # Commit the summary file to the new branch
@@ -441,8 +519,11 @@ Generated with [Agentic Threat Modeling](https://github.com/yourusername/agentic
                             pr_number = prs[0].get("number")
                             self.logger.info("PR already exists, will update it", pr_url=pr_url)
 
-                pr_body = self._build_pr_body(vulnerabilities[:5], fixes_applied)
-                pr_title = f"Security Review: {len(vulnerabilities[:5])} vulnerabilities found - manual fixes required"
+                pr_body = self._build_pr_body_with_files(vulnerabilities[:5], fixes_applied, files_modified)
+                if files_modified:
+                    pr_title = f"🔒 Security Fix: Added warnings for {len(files_modified)} vulnerabilities in {len(set(f['file'] for f in files_modified))} files"
+                else:
+                    pr_title = f"Security Review: {len(vulnerabilities[:5])} vulnerabilities found - manual fixes required"
 
                 if pr_number:
                     # Update existing PR
@@ -488,6 +569,51 @@ Generated with [Agentic Threat Modeling](https://github.com/yourusername/agentic
         except Exception as e:
             self.logger.error("GitHub API error creating fix PR", error=str(e))
             return None
+
+    def _generate_security_comment(self, vulnerability: Vulnerability) -> str:
+        """Generate a security warning comment for the vulnerability"""
+
+        # Determine comment style based on likely file type
+        file_path = ""
+        if vulnerability.metadata and 'file_path' in vulnerability.metadata:
+            file_path = vulnerability.metadata['file_path']
+        elif vulnerability.metadata and 'file_name' in vulnerability.metadata:
+            file_path = vulnerability.metadata['file_name']
+
+        # Detect language from file extension
+        if file_path.endswith(('.py', '.pyw')):
+            comment_style = "#"
+        elif file_path.endswith(('.js', '.ts', '.jsx', '.tsx', '.java', '.c', '.cpp', '.cs', '.go', '.rs')):
+            comment_style = "//"
+        elif file_path.endswith(('.html', '.xml', '.vue')):
+            return f"<!-- 🔒 SECURITY WARNING: {vulnerability.title} (Severity: {vulnerability.severity.value.upper()}, CVSS: {vulnerability.cvss_score}) -->\n<!-- {vulnerability.cwe_id}: {vulnerability.description[:200]}... -->\n<!-- FIX: {vulnerability.recommendation[:200]}... -->"
+        else:
+            comment_style = "#"  # Default to hash comment
+
+        # Build multi-line security comment
+        comment_lines = [
+            f"{comment_style} {'='*70}",
+            f"{comment_style} 🔒 SECURITY WARNING - VULNERABILITY DETECTED",
+            f"{comment_style} {'='*70}",
+            f"{comment_style} Title: {vulnerability.title}",
+            f"{comment_style} Severity: {vulnerability.severity.value.upper()} (CVSS: {vulnerability.cvss_score}/10.0)",
+            f"{comment_style} CWE: {vulnerability.cwe_id} - {vulnerability.cwe_name}",
+            f"{comment_style} OWASP: {vulnerability.owasp_category.value if vulnerability.owasp_category else 'N/A'}",
+            f"{comment_style}",
+            f"{comment_style} ISSUE:",
+            f"{comment_style}   {vulnerability.description[:200]}{'...' if len(vulnerability.description) > 200 else ''}",
+            f"{comment_style}",
+            f"{comment_style} IMPACT:",
+            f"{comment_style}   {vulnerability.impact[:200]}{'...' if len(vulnerability.impact) > 200 else ''}",
+            f"{comment_style}",
+            f"{comment_style} RECOMMENDED FIX:",
+            f"{comment_style}   {vulnerability.recommendation[:300]}{'...' if len(vulnerability.recommendation) > 300 else ''}",
+            f"{comment_style}",
+            f"{comment_style} TODO: Apply the recommended fix and remove this warning after verification",
+            f"{comment_style} {'='*70}"
+        ]
+
+        return '\n'.join(comment_lines)
 
     def _generate_fix_code(self, vulnerability: Vulnerability) -> Optional[str]:
         """Generate fix code for a vulnerability"""
@@ -606,6 +732,93 @@ This document contains detailed security findings and fix recommendations. **No 
 Generated by Agentic AI Cyber Protection System
 """
         return base64.b64encode(summary.encode()).decode()
+
+    def _build_pr_body_with_files(self, vulnerabilities: List[Vulnerability], fixes_applied: list, files_modified: list) -> str:
+        """Build PR description with file modification details"""
+
+        if files_modified:
+            body = f"""## 🔒 Automated Security Review - Code Annotations Added
+
+**Status:** Security warnings added directly to code
+**Files Modified:** {len(set(f['file'] for f in files_modified))}
+**Vulnerabilities Marked:** {len(files_modified)}
+
+This PR automatically adds security warning comments to your code at vulnerable locations. **No functional code changes were made.**
+
+### Files Updated with Security Warnings
+
+"""
+            # Group by file
+            files_grouped = {}
+            for mod in files_modified:
+                if mod['file'] not in files_grouped:
+                    files_grouped[mod['file']] = []
+                files_grouped[mod['file']].append(mod)
+
+            for file_path, mods in files_grouped.items():
+                body += f"\n📁 **`{file_path}`**\n"
+                for mod in mods:
+                    line_info = f" (Line {mod['line']})" if mod.get('line') else ""
+                    body += f"   - ⚠️ {mod['vulnerability']}{line_info}\n"
+
+            body += "\n### What's Been Added\n\n"
+            body += "Security warning comments have been inserted directly in your code:\n"
+            body += "- Each comment includes the vulnerability details\n"
+            body += "- CVSS scores and CWE identifiers are provided\n"
+            body += "- Specific fix recommendations are included\n"
+            body += "- Comments are marked with 🔒 for easy searching\n\n"
+
+            body += "### Next Steps\n\n"
+            body += "1. Review the security warnings added to your code\n"
+            body += "2. Apply the recommended fixes\n"
+            body += "3. Remove the warning comments after fixing\n"
+            body += "4. Run your test suite to ensure nothing broke\n"
+            body += "5. Merge when ready\n\n"
+        else:
+            body = f"""## Security Review Report
+
+**Status:** Manual review required
+**Vulnerabilities Found:** {len(vulnerabilities)}
+
+No files were automatically modified. Please review the findings below.
+
+"""
+
+        body += "### Vulnerabilities Identified\n\n"
+        for i, vuln in enumerate(vulnerabilities, 1):
+            severity_icon = {
+                'critical': '🔴',
+                'high': '🟠',
+                'medium': '🟡',
+                'low': '🔵'
+            }.get(vuln.severity.value, '⚪')
+
+            file_name = vuln.affected_component
+            if vuln.metadata and 'file_path' in vuln.metadata:
+                file_name = vuln.metadata['file_path']
+            elif vuln.metadata and 'file_name' in vuln.metadata:
+                file_name = vuln.metadata['file_name']
+
+            body += f"{i}. {severity_icon} **{vuln.title}**\n"
+            body += f"   - **File:** `{file_name}`"
+            if vuln.vulnerable_code_line:
+                body += f" (Line {vuln.vulnerable_code_line})"
+            body += f"\n"
+            body += f"   - **CWE:** {vuln.cwe_id}\n"
+            body += f"   - **CVSS:** {vuln.cvss_score}/10\n\n"
+
+        if files_modified:
+            body += "\n### Review Notes\n\n"
+            body += "⚠️ **Important:** Security comments have been added but the vulnerabilities are NOT fixed.\n"
+            body += "You must manually apply the recommended fixes.\n\n"
+        else:
+            body += "\n### Additional Resources\n\n"
+            body += "See `SECURITY_FIXES.md` for detailed fix instructions.\n\n"
+
+        body += "---\n"
+        body += "Generated with [Agentic Threat Modeling](https://github.com/yourusername/agentic-threat-modeling)\n"
+
+        return body
 
     def _build_pr_body(self, vulnerabilities: List[Vulnerability], fixes_applied: list) -> str:
         """Build PR description"""

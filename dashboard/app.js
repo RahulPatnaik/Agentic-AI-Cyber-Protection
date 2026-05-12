@@ -12,6 +12,14 @@ const SUPPORTED_CODE_EXTENSIONS = [
     '.sh', '.bash', '.yml', '.yaml', '.json', '.xml', '.html', '.css'
 ];
 
+// Clear any browser-remembered checkbox states on page load
+document.addEventListener('DOMContentLoaded', () => {
+    // Uncheck all compliance checkboxes on page load to prevent browser autocomplete
+    document.querySelectorAll('input[name="compliance"]').forEach(cb => {
+        cb.checked = false;
+    });
+});
+
 // Initialize Mermaid
 mermaid.initialize({
     startOnLoad: true,
@@ -29,7 +37,10 @@ mermaid.initialize({
     flowchart: {
         htmlLabels: true,
         curve: 'basis',
-        padding: 20
+        padding: 20,
+        nodeSpacing: 50,
+        rankSpacing: 50,
+        useMaxWidth: false
     }
 });
 
@@ -130,6 +141,10 @@ async function handleAnalyzeSubmit(e) {
  * Display analysis results
  */
 function displayResults(threatModel) {
+    // Store the threat model globally (both local and window)
+    currentThreatModel = threatModel;
+    window.currentThreatModel = threatModel;
+
     // Update stats
     const criticalVulns = threatModel.vulnerabilities.filter(v => v.severity === 'critical').length;
     const highVulns = threatModel.vulnerabilities.filter(v => v.severity === 'high').length;
@@ -200,39 +215,40 @@ function displayMermaidGraph(attackPaths) {
         return;
     }
 
-    // Build Mermaid flowchart syntax - show ALL attack paths
-    let mermaidCode = 'graph TD\n';
-    let nodeCounter = 0;
-    const nodeMap = new Map();
+    // Build Mermaid flowchart - TOP DOWN, show TOP 3 paths, FULL TEXT
+    let mermaidCode = 'graph TD\n';  // TD = Top Down (vertical)
 
-    // Show all attack paths (removed slice limit)
-    attackPaths.forEach((path, pathIndex) => {
-        // Entry point
-        const entryId = `N${nodeCounter++}`;
-        nodeMap.set(`${pathIndex}_entry`, entryId);
+    // Take top 3 attack paths
+    const topPaths = attackPaths.slice(0, 3);
+
+    topPaths.forEach((path, pathIndex) => {
+        const baseId = pathIndex * 100;  // Space IDs to avoid conflicts
+
+        // Entry point - NO TRUNCATION
+        const entryId = `N${baseId}`;
         mermaidCode += `    ${entryId}["[ENTRY] ${path.entry_point}"]\n`;
 
-        // Intermediate steps
+        // Show ALL intermediate steps - NO TRUNCATION
         let prevId = entryId;
         path.intermediate_steps.forEach((step, stepIndex) => {
-            const stepId = `N${nodeCounter++}`;
-            nodeMap.set(`${pathIndex}_${stepIndex}`, stepId);
+            const stepId = `N${baseId + stepIndex + 1}`;
             mermaidCode += `    ${stepId}["${step}"]\n`;
             mermaidCode += `    ${prevId} --> ${stepId}\n`;
             prevId = stepId;
         });
 
-        // Target/Impact
-        const targetId = `N${nodeCounter++}`;
-        nodeMap.set(`${pathIndex}_target`, targetId);
+        // Target/Impact - NO TRUNCATION
+        const targetId = `N${baseId + 99}`;
         const severity = path.potential_damage || 'critical';
-        const icon = severity === 'critical' ? '[!]' : '[!]';
-        mermaidCode += `    ${targetId}["${icon} ${path.target}"]\n`;
+        mermaidCode += `    ${targetId}["[IMPACT] ${path.target || path.impact}"]\n`;
         mermaidCode += `    ${prevId} --> ${targetId}\n`;
 
-        // Style based on severity
-        const colorClass = severity === 'critical' ? 'critical' : 'high';
-        mermaidCode += `    style ${targetId} fill:#ff4444,stroke:#ff4444,stroke-width:3px\n`;
+        // Style the impact node
+        if (severity === 'critical') {
+            mermaidCode += `    style ${targetId} fill:#ff0000,stroke:#ff0000,color:#fff\n`;
+        } else if (severity === 'high') {
+            mermaidCode += `    style ${targetId} fill:#ff6600,stroke:#ff6600,color:#fff\n`;
+        }
     });
 
     // Update the mermaid element
@@ -1050,12 +1066,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Add NEW Create Fix PR button listener
     const createFixPRBtn = document.getElementById('createFixPRBtn');
-    console.log('>>> CREATE FIX PR BUTTON:', createFixPRBtn);
     if (createFixPRBtn) {
         createFixPRBtn.addEventListener('click', handleCreateFixPR);
-        console.log('>>> CREATE FIX PR LISTENER ATTACHED');
-    } else {
-        console.error('>>> CREATE FIX PR BUTTON NOT FOUND!');
     }
 
     // Modal event listeners
@@ -1231,10 +1243,6 @@ async function handleCommentOnPR() {
 }
 
 async function handleCreateFixPR() {
-    console.log('>>> HANDLE CREATE FIX PR CALLED');
-    console.log('>>> Current Model ID:', currentModelId);
-    console.log('>>> Current Threat Model:', currentThreatModel);
-
     if (!currentModelId) {
         alert('[!] NO ANALYSIS RESULTS AVAILABLE\n\nRUN A THREAT ANALYSIS FIRST');
         return;
@@ -1302,9 +1310,11 @@ async function handleDownloadWorkflow() {
  * Handle download compliance report
  */
 async function handleDownloadComplianceReport() {
-    console.log('>>> Compliance button clicked!');
-    console.log('>>> Current Model ID:', currentModelId);
-    console.log('>>> Current Threat Model:', currentThreatModel);
+    // Use window variables if local ones are null
+    if (!currentModelId && window.currentModelId) {
+        currentModelId = window.currentModelId;
+        currentThreatModel = window.currentThreatModel;
+    }
 
     if (!currentModelId) {
         alert('[!] NO ANALYSIS RESULTS AVAILABLE\n\nRUN A THREAT ANALYSIS WITH COMPLIANCE REQUIREMENTS FIRST');

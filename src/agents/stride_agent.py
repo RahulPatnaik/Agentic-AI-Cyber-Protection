@@ -8,9 +8,14 @@ from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 import structlog
+import os
+from dotenv import load_dotenv
 
 from src.config import Settings
 from src.models.threats import Threat, ThreatSeverity, OWASPCategory
+
+# Load environment variables
+load_dotenv()
 
 logger = structlog.get_logger()
 
@@ -62,8 +67,9 @@ class STRIDEAgent:
         self.logger = structlog.get_logger().bind(agent="stride")
 
         # Initialize Pydantic AI agent with structured output
+        # Use Mistral for now (TODO: switch to SambaNova for heavy reasoning)
         self.agent = Agent(
-            f"{settings.primary_llm}:mistral-large-latest",
+            "mistral:mistral-large-latest",
             output_type=STRIDECategoryResult,  # 🔥 STRUCTURED OUTPUT
             system_prompt=self._build_system_prompt(),
         )

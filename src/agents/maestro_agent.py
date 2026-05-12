@@ -19,7 +19,7 @@ logger = structlog.get_logger()
 
 # Define the MAESTRO Validator Agent
 maestro_agent = Agent(
-    'mistral:mistral-large-latest',
+    'mistral:mistral-small-latest',
     system_prompt="""You are an expert security architect specializing in MAESTRO security principles validation.
 
 MAESTRO Security Principles:

@@ -1,6 +1,6 @@
 """
-Main entry point for Agentic Threat Modeling System
-Run the FastAPI server
+Main entry point for Improved Agentic Threat Modeling System
+Run the FastAPI server with tree-sitter chunking and improved components
 """
 
 from dotenv import load_dotenv
@@ -14,7 +14,7 @@ if __name__ == "__main__":
     settings = Settings()
 
     uvicorn.run(
-        "src.api.app_improved:app",  # Now using the improved app with tree-sitter chunking
+        "src.api.app_improved:app",  # Use the improved app
         host=settings.api_host,
         port=settings.api_port,
         reload=True,
