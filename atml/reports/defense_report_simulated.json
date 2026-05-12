@@ -1,0 +1,100 @@
+{
+  "tool": "agentic-ai-cyber-protection",
+  "phase": "defensive-scan",
+  "target": "atml/targets/vulnerable_flask/app.py",
+  "timestamp": "2026-05-11T00:00:00Z",
+  "confidence_score": 0.94,
+  "elapsed_seconds": 0.81,
+  "vulnerabilities": [
+    {
+      "id": "sqli-login",
+      "cwe_id": "CWE-89",
+      "owasp": "A03:2021-Injection",
+      "stride": "Tampering",
+      "ai_vss": 9.8,
+      "file": "app.py",
+      "line": 70,
+      "fix": "Replace f-string SQL with a parameterised query using ? placeholders and a tuple of bind values."
+    },
+    {
+      "id": "xss-search",
+      "cwe_id": "CWE-79",
+      "owasp": "A03:2021-Injection",
+      "stride": "Tampering",
+      "ai_vss": 6.1,
+      "file": "app.py",
+      "line": 96,
+      "fix": "Render the template with an explicit variable so Jinja autoescape encodes the user input."
+    },
+    {
+      "id": "path-traversal-download",
+      "cwe_id": "CWE-22",
+      "owasp": "A01:2021-Broken Access Control",
+      "stride": "Information Disclosure",
+      "ai_vss": 7.5,
+      "file": "app.py",
+      "line": 104,
+      "fix": "Validate the basename, then resolve and assert the absolute path stays within the files directory."
+    },
+    {
+      "id": "cmdi-ping",
+      "cwe_id": "CWE-78",
+      "owasp": "A03:2021-Injection",
+      "stride": "Elevation of Privilege",
+      "ai_vss": 9.8,
+      "file": "app.py",
+      "line": 115,
+      "fix": "Use subprocess.run with shell=False, an argv list, and an allowlist regex on the host parameter."
+    },
+    {
+      "id": "idor-sqli-profile",
+      "cwe_id": "CWE-639",
+      "owasp": "A01:2021-Broken Access Control",
+      "stride": "Information Disclosure",
+      "ai_vss": 8.1,
+      "file": "app.py",
+      "line": 124,
+      "fix": "Require an authenticated session and restrict the query to the current user with a parameterised statement."
+    },
+    {
+      "id": "deserialization-import",
+      "cwe_id": "CWE-502",
+      "owasp": "A08:2021-Software and Data Integrity Failures",
+      "stride": "Elevation of Privilege",
+      "ai_vss": 9.8,
+      "file": "app.py",
+      "line": 138,
+      "fix": "Replace the unsafe deserializer with json.loads and a strict schema; reject any non-JSON payload."
+    },
+    {
+      "id": "weak-crypto-register",
+      "cwe_id": "CWE-327",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "stride": "Tampering",
+      "ai_vss": 5.3,
+      "file": "app.py",
+      "line": 147,
+      "fix": "Replace MD5 with bcrypt.hashpw and verify with bcrypt.checkpw using a per-user salt."
+    },
+    {
+      "id": "hardcoded-credentials",
+      "cwe_id": "CWE-798",
+      "owasp": "A07:2021-Identification and Authentication Failures",
+      "stride": "Information Disclosure",
+      "ai_vss": 7.5,
+      "file": "app.py",
+      "line": 19,
+      "fix": "Load SECRET_KEY, ADMIN_PASSWORD and API_KEY from environment variables; ship only a .env.example with placeholders."
+    },
+    {
+      "id": "plaintext-passwords",
+      "cwe_id": "CWE-256",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "stride": "Information Disclosure",
+      "ai_vss": 7.5,
+      "file": "app.py",
+      "line": 39,
+      "fix": "Hash seed user passwords with bcrypt before insertion; never store plaintext."
+    }
+  ]
+}

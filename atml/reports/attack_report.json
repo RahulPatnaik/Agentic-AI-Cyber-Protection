@@ -1,0 +1,98 @@
+{
+  "tool": "claude-code",
+  "phase": "initial-attack",
+  "target": "atml/targets/vulnerable_flask/app.py",
+  "timestamp": "2026-05-11T00:00:00Z",
+  "vulnerabilities": [
+    {
+      "id": "sqli-login",
+      "cwe_id": "CWE-89",
+      "file": "app.py",
+      "line": 70,
+      "severity": "critical",
+      "cvss": 9.8,
+      "description": "Login endpoint concatenates user input directly into SQL via f-string, allowing authentication bypass.",
+      "proof_of_concept": "POST /login with username payload that closes the quote and adds a tautology."
+    },
+    {
+      "id": "xss-search",
+      "cwe_id": "CWE-79",
+      "file": "app.py",
+      "line": 96,
+      "severity": "medium",
+      "cvss": 6.1,
+      "description": "Search endpoint reflects raw query string into a Jinja template, enabling reflected cross-site scripting.",
+      "proof_of_concept": "GET /search?q= followed by an inline script tag payload."
+    },
+    {
+      "id": "path-traversal-download",
+      "cwe_id": "CWE-22",
+      "file": "app.py",
+      "line": 104,
+      "severity": "high",
+      "cvss": 7.5,
+      "description": "Download endpoint joins user-supplied filename without normalization, allowing parent-directory traversal.",
+      "proof_of_concept": "GET /download?file=../../etc/passwd or similar relative path payload."
+    },
+    {
+      "id": "cmdi-ping",
+      "cwe_id": "CWE-78",
+      "file": "app.py",
+      "line": 115,
+      "severity": "critical",
+      "cvss": 9.8,
+      "description": "Ping endpoint passes user input to a shell, enabling OS command injection via shell metacharacters.",
+      "proof_of_concept": "GET /ping?host=127.0.0.1 followed by a semicolon and an arbitrary command."
+    },
+    {
+      "id": "idor-sqli-profile",
+      "cwe_id": "CWE-639",
+      "file": "app.py",
+      "line": 124,
+      "severity": "high",
+      "cvss": 8.1,
+      "description": "Profile endpoint exposes any user without authorization and is also vulnerable to SQL injection.",
+      "proof_of_concept": "GET /profile?name= followed by a UNION-based SQLi payload to leak password column."
+    },
+    {
+      "id": "deserialization-import",
+      "cwe_id": "CWE-502",
+      "file": "app.py",
+      "line": 138,
+      "severity": "critical",
+      "cvss": 9.8,
+      "description": "Import endpoint deserialises untrusted request body, enabling remote code execution via gadget chain.",
+      "proof_of_concept": "POST /import with crafted serialized payload that triggers code execution on load."
+    },
+    {
+      "id": "weak-crypto-register",
+      "cwe_id": "CWE-327",
+      "file": "app.py",
+      "line": 147,
+      "severity": "medium",
+      "cvss": 5.3,
+      "description": "Register endpoint hashes passwords with MD5, a cryptographically broken algorithm.",
+      "proof_of_concept": "Offline brute-force of captured MD5 digest with a wordlist."
+    },
+    {
+      "id": "hardcoded-credentials",
+      "cwe_id": "CWE-798",
+      "file": "app.py",
+      "line": 19,
+      "severity": "high",
+      "cvss": 7.5,
+      "description": "SECRET_KEY, ADMIN_PASSWORD, and API_KEY are hard-coded in source.",
+      "proof_of_concept": "Grep the repository for credential constants."
+    },
+    {
+      "id": "plaintext-passwords",
+      "cwe_id": "CWE-256",
+      "file": "app.py",
+      "line": 39,
+      "severity": "high",
+      "cvss": 7.5,
+      "description": "Seed users store passwords as plaintext in the database.",
+      "proof_of_concept": "Query the users table directly to read password column in plaintext."
+    }
+  ]
+}

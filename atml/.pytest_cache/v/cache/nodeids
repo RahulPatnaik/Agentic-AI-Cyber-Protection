@@ -1,0 +1,10 @@
+[
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_download_blocks_traversal",
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_import_rejects_binary_blob",
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_index",
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_login_invalid_blocks_sqli",
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_login_valid",
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_ping_rejects_injection",
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_profile_requires_auth",
+  "targets/vulnerable_flask_patched/tests/test_functional.py::test_search_escapes_xss"
+]

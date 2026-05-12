@@ -1,0 +1,19 @@
+[
+  "tests/test_functional.py::test_ble_config_binary_path",
+  "tests/test_functional.py::test_bolus_clamped_to_max",
+  "tests/test_functional.py::test_clinician_override_bad_key",
+  "tests/test_functional.py::test_clinician_override_valid_key",
+  "tests/test_functional.py::test_confirm_wrong_code_rejected",
+  "tests/test_functional.py::test_decode_dose_frame_bad_checksum",
+  "tests/test_functional.py::test_decode_dose_frame_valid",
+  "tests/test_functional.py::test_delivery_history_other_patient_blocked",
+  "tests/test_functional.py::test_delivery_history_own_records",
+  "tests/test_functional.py::test_enroll_and_authenticate",
+  "tests/test_functional.py::test_invalid_token_rejected",
+  "tests/test_functional.py::test_schedule_bolus_succeeds",
+  "tests/test_functional.py::test_search_patients_by_name",
+  "tests/test_functional.py::test_search_patients_invalid_field_returns_empty",
+  "tests/test_functional.py::test_stage_and_confirm_dose",
+  "tests/test_functional.py::test_unknown_mrn_rejected",
+  "tests/test_functional.py::test_wrong_pin_rejected"
+]

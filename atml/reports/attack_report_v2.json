@@ -1,0 +1,18 @@
+{
+  "tool": "claude-code",
+  "phase": "re-attack",
+  "target": "atml/targets/vulnerable_flask_patched/app.py",
+  "timestamp": "2026-05-11T00:00:00Z",
+  "vulnerabilities": [],
+  "notes": [
+    "Login uses parameterised query — tested with classic tautology payloads; all return 401.",
+    "Search variable goes through Jinja autoescape — script tags rendered as text.",
+    "Download enforces secure_filename and resolved-path containment under FILES_DIR.",
+    "Ping uses shell=False with strict host allowlist; metacharacter payloads return 400.",
+    "Profile requires authenticated session and only returns the current user's record.",
+    "Import endpoint accepts only JSON dict with a key allowlist; binary blobs return 400.",
+    "Register uses bcrypt; legacy hashing removed.",
+    "Secrets loaded from environment; no credentials remain in source.",
+    "Seed users hashed with bcrypt at init time; no plaintext columns remain."
+  ]
+}
