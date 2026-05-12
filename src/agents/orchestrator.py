@@ -24,6 +24,10 @@ from src.agents.cwe_agent import CWEAnalyzer
 from src.agents.maestro_agent import MAESTROValidator
 from src.agents.dfd_builder_agent import DFDBuilder
 from src.agents.threat_generator import AutomatedThreatGenerator
+from src.agents.stride_agent import STRIDEAgent
+from src.agents.symbolic_verifier import SymbolicVerifier
+from src.agents.cve_scanner import CVEScanner
+from src.agents.agentic_security_agent import AgenticSecurityAnalyzer
 
 logger = structlog.get_logger()
 
@@ -49,12 +53,16 @@ class ThreatModelingOrchestrator:
         # Initialize all agents
         self.dfd_builder = DFDBuilder(settings)
         self.threat_generator = AutomatedThreatGenerator(settings)
+        self.stride_agent = STRIDEAgent(settings)
         self.owasp_analyzer = OWASPAnalyzer(settings)
         self.attack_tree_analyzer = AttackTreeAnalyzer(settings)
         self.cwe_analyzer = CWEAnalyzer(settings)
         self.maestro_validator = MAESTROValidator(settings)
+        self.symbolic_verifier = SymbolicVerifier()
+        self.cve_scanner = CVEScanner(nvd_api_key=settings.nvd_api_key)
+        self.agentic_analyzer = AgenticSecurityAnalyzer(settings)
 
-        logger.info("Initialized Threat Modeling Orchestrator with 6 agents (including DFD builder)")
+        logger.info("Initialized Threat Modeling Orchestrator with 10 agents (DFD, STRIDE, OWASP, Attack Tree, CWE, MAESTRO, Symbolic Verifier, CVE Scanner, Agentic Security)")
 
     async def analyze(self, asset: AssetInput) -> ThreatModel:
         """
@@ -71,7 +79,7 @@ class ThreatModelingOrchestrator:
 
         try:
             # Phase 0: Build DFD and generate automated threats (OWASP pytm-style)
-            logger.info("Phase 0: Building Data Flow Diagram from system description")
+            logger.warning("🔷 PHASE 0: Building Data Flow Diagram from system description")
             dfd = await self.dfd_builder.build_dfd(asset)
 
             logger.info(
@@ -90,16 +98,56 @@ class ThreatModelingOrchestrator:
                 threats_generated=len(automated_threats)
             )
 
-            # Generate Mermaid DFD diagram for visualization
-            dfd_diagram = self.dfd_builder.generate_mermaid_dfd(dfd)
+            # Generate Mermaid DFD diagram for visualization (will be updated with vulnerabilities later)
+            dfd_diagram = None  # Will be generated after we have all vulnerabilities
 
-            # Phase 1: OWASP Analysis
-            logger.info("Phase 1: Running OWASP analysis")
+            # Phase 1: STRIDE Analysis
+            logger.warning("🔷 PHASE 1: Running STRIDE threat analysis")
+            stride_threats = await self.stride_agent.analyze_system(
+                system_description=asset.description,
+                components=[{
+                    'name': p.name,
+                    'type': 'Process',
+                    'description': p.description or asset.description
+                } for p in dfd.processes] if dfd.processes else None
+            )
+
+            logger.info(
+                "STRIDE analysis complete",
+                stride_threats=len(stride_threats)
+            )
+
+            # Phase 2: OWASP Analysis
+            logger.warning("🔷 PHASE 2: Running OWASP analysis")
             owasp_analysis = await self.owasp_analyzer.analyze(asset)
             owasp_vulnerabilities = owasp_analysis.vulnerabilities_found
 
-            # Merge automated threats with OWASP analysis results
-            vulnerabilities = automated_threats + owasp_vulnerabilities
+            # Convert STRIDE Threat objects to Vulnerability objects
+            stride_vulnerabilities = []
+            for threat in stride_threats:
+                from src.models.threats import Vulnerability
+                from uuid import uuid4
+                vuln = Vulnerability(
+                    vuln_id=uuid4(),
+                    title=threat.title,
+                    description=threat.description,
+                    severity=threat.severity,
+                    cvss_score=8.0 if threat.severity.value == "critical" else 7.0 if threat.severity.value == "high" else 5.0,
+                    cwe_id=threat.cwe_id or "CWE-1000",
+                    cwe_name=threat.cwe_name or "Unknown Weakness",
+                    owasp_category=threat.owasp_category,
+                    attack_vector=threat.attack_vector or "Unknown",
+                    impact=threat.impact or "Security compromise",
+                    affected_component="System Component",
+                    recommendation=threat.recommendation or "Implement security controls",
+                    likelihood=threat.likelihood or "medium",
+                    risk_score=8.0,
+                    exploitability=threat.exploitability or "moderate"
+                )
+                stride_vulnerabilities.append(vuln)
+
+            # Merge automated threats with STRIDE and OWASP analysis results
+            vulnerabilities = automated_threats + stride_vulnerabilities + owasp_vulnerabilities
 
             # Deduplicate based on CWE ID and title
             seen = set()
@@ -120,8 +168,8 @@ class ThreatModelingOrchestrator:
                 confidence=owasp_analysis.confidence
             )
 
-            # Phase 2: Run remaining agents in parallel
-            logger.info("Phase 2: Running attack tree, CWE, and MAESTRO agents in parallel")
+            # Phase 3: Run remaining agents in parallel (Attack Tree, CWE, MAESTRO, Agentic Security, Symbolic Verification)
+            logger.warning("🔷 PHASE 3: Running attack tree, CWE, MAESTRO, agentic security, and symbolic verification agents in parallel")
 
             attack_tree_task = asyncio.create_task(
                 self.attack_tree_analyzer.analyze(asset, vulnerabilities)
@@ -132,18 +180,34 @@ class ThreatModelingOrchestrator:
             maestro_task = asyncio.create_task(
                 self.maestro_validator.analyze(asset, vulnerabilities)
             )
+            agentic_task = asyncio.create_task(
+                self.agentic_analyzer.analyze(asset, vulnerabilities)
+            )
+
+            # Symbolic verification - extract security features AND Z3 variables from DFD
+            security_features = self.symbolic_verifier.extract_security_features(asset.description)
+            z3_variables = self.symbolic_verifier.extract_z3_variables_from_dfd(dfd)  # 🔥 NEW!
+            symbolic_task = asyncio.create_task(
+                self.symbolic_verifier.verify_system_security_with_dfd(
+                    asset.description,
+                    security_features,
+                    z3_variables  # Pass extracted variables
+                )
+            )
 
             # Wait for all agents to complete
-            attack_tree_analysis, cwe_analysis, maestro_analysis = await asyncio.gather(
+            attack_tree_analysis, cwe_analysis, maestro_analysis, agentic_analysis, symbolic_verification = await asyncio.gather(
                 attack_tree_task,
                 cwe_task,
                 maestro_task,
+                agentic_task,
+                symbolic_task,
                 return_exceptions=True
             )
 
             # Handle any exceptions from parallel execution
             if isinstance(attack_tree_analysis, Exception):
-                logger.error("Attack tree analysis failed", error=str(attack_tree_analysis))
+                logger.error("❌ Attack tree analysis failed", error=str(attack_tree_analysis), exc_info=True)
                 attack_tree_analysis = AgentAnalysis(
                     agent_name="Attack Tree Analyzer",
                     agent_type="attack_tree",
@@ -154,7 +218,7 @@ class ThreatModelingOrchestrator:
                 )
 
             if isinstance(cwe_analysis, Exception):
-                logger.error("CWE analysis failed", error=str(cwe_analysis))
+                logger.error("❌ CWE analysis failed", error=str(cwe_analysis), exc_info=True)
                 cwe_analysis = AgentAnalysis(
                     agent_name="CWE Analyzer",
                     agent_type="cwe_analyzer",
@@ -165,7 +229,7 @@ class ThreatModelingOrchestrator:
                 )
 
             if isinstance(maestro_analysis, Exception):
-                logger.error("MAESTRO validation failed", error=str(maestro_analysis))
+                logger.error("❌ MAESTRO validation failed", error=str(maestro_analysis), exc_info=True)
                 maestro_analysis = AgentAnalysis(
                     agent_name="MAESTRO Validator",
                     agent_type="maestro",
@@ -175,13 +239,63 @@ class ThreatModelingOrchestrator:
                     reasoning="Error occurred"
                 )
 
+            if isinstance(agentic_analysis, Exception):
+                logger.error("❌ Agentic security analysis failed", error=str(agentic_analysis), exc_info=True)
+                agentic_analysis = AgentAnalysis(
+                    agent_name="Agentic Security Analyzer",
+                    agent_type="ai_safety",
+                    findings=["Analysis failed"],
+                    vulnerabilities_found=[],
+                    confidence=0.0,
+                    reasoning="Error occurred"
+                )
+
+            if isinstance(symbolic_verification, Exception):
+                logger.error("❌ Symbolic verification failed", error=str(symbolic_verification), exc_info=True)
+                symbolic_verification = []
+
+            # Merge agentic vulnerabilities into main list
+            if agentic_analysis and agentic_analysis.vulnerabilities_found:
+                logger.info(f"Adding {len(agentic_analysis.vulnerabilities_found)} agentic-specific vulnerabilities")
+                vulnerabilities.extend(agentic_analysis.vulnerabilities_found)
+
             logger.info("All agent analyses complete")
+
+            # Phase 4: CVE Enrichment (run in parallel for top vulnerabilities)
+            logger.warning("🔷 PHASE 4: Enriching vulnerabilities with CVE data from NVD API")
+            cve_enrichment_tasks = []
+            for vuln in vulnerabilities[:10]:  # Enrich top 10 vulnerabilities
+                task = asyncio.create_task(
+                    self.cve_scanner.enrich_vulnerability_with_cves(
+                        vulnerability_description=vuln.description,
+                        cwe_id=vuln.cwe_id
+                    )
+                )
+                cve_enrichment_tasks.append((vuln, task))
+
+            # Wait for CVE enrichment
+            for vuln, task in cve_enrichment_tasks:
+                try:
+                    related_cves = await task
+                    if related_cves and not hasattr(vuln, 'related_cves'):
+                        # Store related CVEs in vulnerability metadata
+                        if not vuln.metadata:
+                            vuln.metadata = {}
+                        vuln.metadata['related_cves'] = [
+                            {"cve_id": cve.cve_id, "cvss_score": cve.cvss_score, "severity": cve.severity}
+                            for cve in related_cves
+                        ]
+                except Exception as e:
+                    logger.warning("⚠️ CVE enrichment failed for vulnerability", vuln_title=vuln.title, error=str(e))
 
             # Generate attack paths
             attack_paths = self.attack_tree_analyzer._generate_attack_paths(asset, vulnerabilities)
 
             # Generate CWE references
             cwe_references = self.cwe_analyzer._generate_cwe_references(asset, vulnerabilities)
+
+            # NOW generate DFD diagram with all vulnerabilities highlighted
+            dfd_diagram = self.dfd_builder.generate_mermaid_dfd(dfd, vulnerabilities)
 
             # Build threat graph for visualization (includes DFD + attack paths)
             attack_tree_graph = self.attack_tree_analyzer.build_graph_structure(attack_paths)
@@ -192,6 +306,12 @@ class ThreatModelingOrchestrator:
                 "attack_tree": attack_tree_graph,
                 "type": "combined"
             }
+
+            # Debug: Log what we're sending to frontend
+            logger.warning(f"📤 Sending to frontend - DFD diagram (first 300 chars):\n{dfd_diagram[:300]}")
+            logger.warning(f"📤 DFD diagram length: {len(dfd_diagram)} characters")
+            logger.warning(f"📤 Attack paths generated: {len(attack_paths)}")
+            logger.warning(f"📤 Attack tree nodes: {len(attack_tree_graph.get('nodes', []))}")
 
             # Select top 5-10 critical vulnerabilities
             top_vulnerabilities = self._select_top_vulnerabilities(vulnerabilities)
@@ -208,13 +328,21 @@ class ThreatModelingOrchestrator:
             )
 
             # Build agent analyses summary
+            symbolic_summary = f"Verified {len(symbolic_verification)} security properties" if symbolic_verification else "Symbolic verification skipped"
+            if symbolic_verification:
+                verified_count = sum(1 for r in symbolic_verification if r.verified)
+                symbolic_summary += f" ({verified_count}/{len(symbolic_verification)} passed)"
+
             agent_analyses = {
                 "dfd_builder": f"Built DFD with {len(dfd.processes)} processes, {len(dfd.data_stores)} data stores, {len(dfd.data_flows)} data flows, {len(dfd.trust_boundaries)} trust boundaries",
                 "threat_generator": f"Generated {len(automated_threats)} automated threats from DFD structure",
+                "stride": f"STRIDE analysis identified {len(stride_threats)} threats across 6 categories",
                 "owasp": owasp_analysis.reasoning,
                 "attack_tree": attack_tree_analysis.reasoning,
                 "cwe": cwe_analysis.reasoning,
-                "maestro": maestro_analysis.reasoning
+                "maestro": maestro_analysis.reasoning,
+                "symbolic_verifier": symbolic_summary,
+                "cve_scanner": f"CVE enrichment added for {sum(1 for v in vulnerabilities if v.metadata and 'related_cves' in v.metadata)} vulnerabilities"
             }
 
             # Calculate analysis duration
@@ -237,9 +365,9 @@ class ThreatModelingOrchestrator:
                 threat_graph=threat_graph
             )
 
-            logger.info(
-                "Threat modeling complete",
-                duration_seconds=duration,
+            logger.warning(
+                "✅ Threat modeling complete",
+                duration_seconds=round(duration, 2),
                 total_vulnerabilities=len(vulnerabilities),
                 top_vulnerabilities=len(top_vulnerabilities),
                 attack_paths=len(attack_paths),
@@ -249,7 +377,11 @@ class ThreatModelingOrchestrator:
             return threat_model
 
         except Exception as e:
-            logger.error("Orchestration failed", error=str(e), exc_info=True)
+            logger.error("❌ ❌ ❌ ORCHESTRATION FAILED ❌ ❌ ❌", error=str(e))
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error location: {e.__traceback__.tb_frame.f_code.co_filename}:{e.__traceback__.tb_lineno}")
+            import traceback
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
             raise
 
     def _select_top_vulnerabilities(

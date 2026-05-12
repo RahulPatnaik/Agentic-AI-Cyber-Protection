@@ -219,46 +219,98 @@ class DFDBuilder:
 
         return dfd
 
-    def generate_mermaid_dfd(self, dfd: DataFlowDiagram) -> str:
+    def generate_mermaid_dfd(self, dfd: DataFlowDiagram, vulnerabilities=None) -> str:
         """
         Generate Mermaid diagram code for the DFD.
-        This creates a visual representation of the architecture.
+        This creates a visual representation of the architecture with vulnerabilities highlighted.
+
+        Args:
+            dfd: DataFlowDiagram to visualize
+            vulnerabilities: Optional list of vulnerabilities to highlight on diagram
         """
-        mermaid_code = "graph TD\n"
+        try:
+            mermaid_code = "graph TD\n"
 
-        # Add external entities
-        for entity in dfd.external_entities:
-            icon = "👤" if entity.entity_type == "user" else "🌐"
-            mermaid_code += f"    {entity.id.hex[:8]}[\"{icon} {entity.name}\"]\n"
+            # Add external entities (no special chars in labels)
+            for entity in dfd.external_entities:
+                icon = "USER" if entity.entity_type == "user" else "EXTERNAL"
+                # Escape special characters and use quotes
+                safe_name = entity.name.replace('"', "'")
+                mermaid_code += f'    {entity.id.hex[:8]}["{icon} - {safe_name}"]\n'
 
-        # Add processes
-        for process in dfd.processes:
-            icon = "⚙️" if process.implementsAuthentication else "📦"
-            mermaid_code += f"    {process.id.hex[:8]}[\"{icon} {process.name}\"]\n"
+            # Add processes
+            for process in dfd.processes:
+                icon = "AUTH" if process.implementsAuthentication else "PROCESS"
+                safe_name = process.name.replace('"', "'")
+                mermaid_code += f'    {process.id.hex[:8]}["{icon} - {safe_name}"]\n'
 
-        # Add data stores
-        for store in dfd.data_stores:
-            icon = "🔒" if store.isEncrypted else "💾"
-            mermaid_code += f"    {store.id.hex[:8]}[(\"{icon} {store.name}\")]\n"
+            # Add data stores
+            for store in dfd.data_stores:
+                icon = "ENCRYPTED DB" if store.isEncrypted else "DATABASE"
+                safe_name = store.name.replace('"', "'")
+                mermaid_code += f'    {store.id.hex[:8]}[("{icon} - {safe_name}")]\n'
 
-        # Add data flows
-        for flow in dfd.data_flows:
-            arrow = "==>" if flow.isEncrypted else "-->"
-            label = f"{flow.protocol.value}"
-            if flow.carries_credentials:
-                label += " (creds)"
-            if flow.carries_pii:
-                label += " (PII)"
+            # Add data flows
+            for flow in dfd.data_flows:
+                arrow = "==>" if flow.isEncrypted else "-->"
+                label = f"{flow.protocol.value}"
+                if flow.carries_credentials:
+                    label += " (creds)"
+                if flow.carries_pii:
+                    label += " (PII)"
 
-            mermaid_code += f"    {flow.source_id.hex[:8]} {arrow}|{label}| {flow.destination_id.hex[:8]}\n"
+                mermaid_code += f"    {flow.source_id.hex[:8]} {arrow}|{label}| {flow.destination_id.hex[:8]}\n"
 
-        # Style critical components
-        for entity in dfd.external_entities:
-            if entity.can_be_malicious:
-                mermaid_code += f"    style {entity.id.hex[:8]} fill:#ff4444,stroke:#ff4444\n"
+            # NEW: Add vulnerability nodes if provided
+            if vulnerabilities:
+                mermaid_code += "\n    %% Vulnerabilities\n"
+                for i, vuln in enumerate(vulnerabilities[:10]):  # Show top 10 vulnerabilities
+                    vuln_id = f"vuln{i}"
+                    severity_emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}.get(vuln.severity.value, '⚪')
+                    vuln_label = f"{severity_emoji} {vuln.title[:30]}"
+                    mermaid_code += f'    {vuln_id}["{vuln_label}"]\n'
 
-        for flow in dfd.data_flows:
-            if not flow.isEncrypted and flow.carries_pii:
-                mermaid_code += f"    linkStyle {dfd.data_flows.index(flow)} stroke:#ff4444,stroke-width:3px\n"
+                    # Connect vulnerability to affected component (processes or data stores)
+                    # Link to first process by default (can be improved)
+                    if dfd.processes:
+                        mermaid_code += f"    {dfd.processes[0].id.hex[:8]} -.->|vulnerable to| {vuln_id}\n"
 
-        return mermaid_code
+            # Style critical components
+            for entity in dfd.external_entities:
+                if entity.can_be_malicious:
+                    mermaid_code += f"    style {entity.id.hex[:8]} fill:#ff4444,stroke:#ff4444,color:#fff\n"
+
+            for flow in dfd.data_flows:
+                if not flow.isEncrypted and flow.carries_pii:
+                    mermaid_code += f"    linkStyle {dfd.data_flows.index(flow)} stroke:#ff4444,stroke-width:3px\n"
+
+            # Style vulnerability nodes by severity
+            if vulnerabilities:
+                for i, vuln in enumerate(vulnerabilities[:10]):
+                    vuln_id = f"vuln{i}"
+                    color_map = {
+                        'critical': '#990000',
+                        'high': '#ff6600',
+                        'medium': '#ffcc00',
+                        'low': '#66cc66'
+                    }
+                    color = color_map.get(vuln.severity.value, '#cccccc')
+                    mermaid_code += f"    style {vuln_id} fill:{color},stroke:{color},color:#fff\n"
+
+            logger.warning("✅ Generated Enhanced Mermaid DFD with vulnerabilities")
+            logger.warning(f"📊 Mermaid code (first 500 chars):\n{mermaid_code[:500]}")
+            logger.warning(f"📊 Mermaid code (last 200 chars):\n{mermaid_code[-200:]}")
+            return mermaid_code
+
+        except Exception as e:
+            logger.error(f"❌ ❌ ❌ Mermaid DFD generation CRASHED: {e}")
+            import traceback
+            logger.error(f"Mermaid traceback:\n{traceback.format_exc()}")
+            # Return a simple fallback diagram
+            fallback = """graph TD
+    A["System Analysis"]
+    B["Unable to generate DFD"]
+    A --> B
+"""
+            logger.warning(f"Returning fallback diagram:\n{fallback}")
+            return fallback

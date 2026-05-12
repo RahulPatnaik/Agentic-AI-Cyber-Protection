@@ -14,11 +14,14 @@ class Settings(BaseSettings):
     primary_llm: str = "mistral"
 
     # Database
-    database_url: str = "sqlite:///./threat_modeling.db"
+    database_url: str = "postgresql://user:password@localhost:5432/threat_modeling"
     chroma_db_path: str = "./data/chroma_db"
 
     # NVD API
     nvd_api_key: str = ""
+
+    # GitHub Integration
+    github_token: str = ""
 
     # API Configuration
     api_host: str = "0.0.0.0"

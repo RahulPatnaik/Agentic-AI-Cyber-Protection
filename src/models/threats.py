@@ -19,6 +19,10 @@ class SeverityLevel(str, Enum):
     CRITICAL = "critical"
 
 
+# Alias for STRIDE agent compatibility
+ThreatSeverity = SeverityLevel
+
+
 class OWASPCategory(str, Enum):
     """OWASP Top 10 2021 categories"""
     A01_BROKEN_ACCESS_CONTROL = "A01:2021-Broken Access Control"
@@ -49,6 +53,76 @@ class MITRECategory(str, Enum):
     IMPACT = "impact"
 
 
+class OWASPLLMCategory(str, Enum):
+    """OWASP LLM Top 10 for AI/ML Security"""
+    LLM01_PROMPT_INJECTION = "LLM01:2023 - Prompt Injection"
+    LLM02_INSECURE_OUTPUT = "LLM02:2023 - Insecure Output Handling"
+    LLM03_SUPPLY_CHAIN = "LLM03:2023 - Supply Chain Vulnerabilities"
+    LLM04_DATA_POISONING = "LLM04:2023 - Model Denial of Service"
+    LLM05_OUTPUT_HANDLING = "LLM05:2023 - Supply Chain Vulnerabilities"
+    LLM06_SENSITIVE_DISCLOSURE = "LLM06:2023 - Sensitive Information Disclosure"
+    LLM07_INSECURE_PLUGIN = "LLM07:2023 - Insecure Plugin Design"
+    LLM08_EXCESSIVE_AGENCY = "LLM08:2023 - Excessive Agency"
+    LLM09_OVERRELIANCE = "LLM09:2023 - Overreliance"
+    LLM10_MODEL_THEFT = "LLM10:2023 - Model Theft"
+
+
+class AgenticThreatCategory(str, Enum):
+    """Agentic system-specific threat categories"""
+    PROMPT_INJECTION = "prompt_injection"
+    JAILBREAKING = "jailbreaking"
+    TOOL_MISUSE = "tool_misuse"
+    CONTEXT_POISONING = "context_poisoning"
+    MULTI_AGENT_COORDINATION = "multi_agent_coordination_attack"
+    GOAL_HIJACKING = "agent_goal_hijacking"
+    RECURSIVE_DELEGATION = "recursive_delegation_exploit"
+    MCP_EXPLOITATION = "mcp_exploitation"
+    AGENT_TO_AGENT_ATTACK = "agent_to_agent_attack"
+    PRIVILEGE_ESCALATION = "privilege_escalation_agentic"
+    DATA_EXFILTRATION = "data_exfiltration_agentic"
+    SUPPLY_CHAIN = "supply_chain_agentic"
+
+
+class MCPThreatCategory(str, Enum):
+    """MCP (Model Context Protocol) specific threats"""
+    MALICIOUS_MCP_SERVER = "malicious_mcp_server"
+    MCP_TOOL_ABUSE = "mcp_tool_abuse"
+    MCP_RESPONSE_POISONING = "mcp_response_poisoning"
+    MCP_AUTH_BYPASS = "mcp_authentication_bypass"
+    MCP_PARAMETER_INJECTION = "mcp_parameter_injection"
+    MCP_TOOL_CHAINING = "mcp_tool_chaining_attack"
+    MCP_SUPPLY_CHAIN = "mcp_supply_chain_attack"
+    MCP_DATA_EXFILTRATION = "mcp_data_exfiltration"
+
+
+class Threat(BaseModel):
+    """
+    Threat identified by STRIDE analysis
+    Simplified version of Vulnerability for STRIDE agent compatibility
+    """
+    title: str
+    description: str
+    severity: SeverityLevel
+    stride_category: Optional[str] = None  # S/T/R/I/D/E
+    owasp_category: Optional[OWASPCategory] = None
+    cwe_id: Optional[str] = None
+    cwe_name: Optional[str] = None
+    attack_vector: Optional[str] = None
+    recommendation: Optional[str] = None
+    impact: Optional[str] = None
+    likelihood: Optional[Literal["low", "medium", "high"]] = None
+    exploitability: Optional[Literal["easy", "moderate", "difficult"]] = None
+
+    # Agentic threat fields
+    owasp_llm_category: Optional[OWASPLLMCategory] = None
+    agentic_threat_category: Optional[AgenticThreatCategory] = None
+    mcp_threat_category: Optional[MCPThreatCategory] = None
+    is_agentic_threat: bool = False
+    is_mcp_threat: bool = False
+
+    metadata: Optional[Dict] = Field(default_factory=dict)
+
+
 class ComponentType(str, Enum):
     """System component types"""
     WEB_SERVER = "web_server"
@@ -60,6 +134,16 @@ class ComponentType(str, Enum):
     USER_INPUT = "user_input"
     BUSINESS_LOGIC = "business_logic"
     NETWORK_BOUNDARY = "network_boundary"
+
+    # Agentic component types
+    AI_AGENT = "ai_agent"
+    LLM_ENDPOINT = "llm_endpoint"
+    MCP_SERVER = "mcp_server"
+    MCP_CLIENT = "mcp_client"
+    TOOL_INTEGRATION = "tool_integration"
+    MULTI_AGENT_SYSTEM = "multi_agent_system"
+    PROMPT_HANDLER = "prompt_handler"
+    CONTEXT_MANAGER = "context_manager"
 
 
 class AssetInput(BaseModel):
@@ -94,6 +178,13 @@ class Vulnerability(BaseModel):
     owasp_category: OWASPCategory
     mitre_tactic: Optional[MITRECategory] = None
 
+    # Agentic classification
+    owasp_llm_category: Optional[OWASPLLMCategory] = None
+    agentic_threat_category: Optional[AgenticThreatCategory] = None
+    mcp_threat_category: Optional[MCPThreatCategory] = None
+    is_agentic_threat: bool = False
+    is_mcp_threat: bool = False
+
     # Attack details
     attack_vector: str
     prerequisites: List[str] = Field(default_factory=list)
@@ -116,6 +207,9 @@ class Vulnerability(BaseModel):
 
     # Compliance
     compliance_violations: List[str] = Field(default_factory=list)
+
+    # Additional metadata (for CVE enrichment, etc.)
+    metadata: Optional[Dict] = Field(default_factory=dict)
 
 
 class AttackPath(BaseModel):
@@ -204,6 +298,7 @@ class ThreatModel(BaseModel):
     analysis_duration_seconds: float
     agent_analyses: Dict[str, str] = Field(default_factory=dict, description="Individual agent outputs")
     confidence_score: float = Field(..., ge=0.0, le=1.0)
+    metadata: Optional[Dict] = Field(default_factory=dict, description="Additional metadata (source, files analyzed, etc.)")
 
     # Graph data for visualization
     threat_graph: Optional[Dict] = Field(None, description="D3.js-compatible graph structure")
