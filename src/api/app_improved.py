@@ -803,10 +803,12 @@ class GitHubFixPRRequest(BaseModel):
 
 
 class DFDUploadRequest(BaseModel):
-    """Request to upload custom DFD"""
+    """Request to upload custom DFD with optional code"""
     format: str = Field(..., description="Format: plantuml, mermaid, json, auto")
     content: str = Field(..., description="DFD content in specified format")
     description: str = Field(..., description="System description for context")
+    code_snippet: Optional[str] = Field(None, description="Code to analyze with tree-sitter chunking")
+    compliance_requirements: List[str] = Field(default=[], description="List of compliance frameworks")
 
 
 @app.post("/api/github/create-issue/{model_id}", tags=["GitHub"])
@@ -996,31 +998,148 @@ async def upload_custom_dfd(request: DFDUploadRequest):
                 return await upload_custom_dfd(DFDUploadRequest(
                     format="plantuml",
                     content=request.content,
-                    description=request.description
+                    description=request.description,
+                    code_snippet=request.code_snippet,
+                    compliance_requirements=request.compliance_requirements
                 ))
             elif 'graph' in request.content and '-->' in request.content:
                 return await upload_custom_dfd(DFDUploadRequest(
                     format="mermaid",
                     content=request.content,
-                    description=request.description
+                    description=request.description,
+                    code_snippet=request.code_snippet,
+                    compliance_requirements=request.compliance_requirements
                 ))
             elif request.content.strip().startswith('{'):
                 return await upload_custom_dfd(DFDUploadRequest(
                     format="json",
                     content=request.content,
-                    description=request.description
+                    description=request.description,
+                    code_snippet=request.code_snippet,
+                    compliance_requirements=request.compliance_requirements
                 ))
+            else:
+                # Default fallback - treat as description
+                components = ["User Interface", "Backend API", "Database"]
+                flows = ["User sends requests to Backend", "Backend queries Database"]
 
-        # Create asset from parsed DFD
-        asset = AssetInput(
-            description=request.description or f"Custom DFD with {len(components)} components",
-            component_type="application",
-            data_sensitivity="high",
-            deployment_environment="cloud",
-            frameworks=components[:3],  # Use first 3 as frameworks
-            components=components,
-            interactions=flows
-        )
+        # Check if code snippet is provided for tree-sitter chunking
+        chunks = []
+        if request.code_snippet:
+            # Check if it's a GitHub URL (be more flexible with detection)
+            import re
+            code_stripped = request.code_snippet.strip()
+            logger.info(f"Checking if code snippet is GitHub URL: '{code_stripped[:100]}...'")
+
+            # More flexible regex - handles trailing slashes, .git, paths, etc.
+            github_match = re.search(r'github\.com/([^/\s]+)/([^/\s]+)', code_stripped)
+
+            # Also check if it just contains github.com
+            is_github_url = 'github.com' in code_stripped.lower()
+
+            if github_match and is_github_url:
+                # It's a GitHub URL - fetch the actual code!
+                logger.info("GitHub URL detected in code snippet, fetching repository code")
+                owner, repo_name = github_match.groups()
+                # Clean up repo name - remove .git, trailing slashes, and any path after repo
+                repo_name = repo_name.replace('.git', '').split('/')[0].split('?')[0].split('#')[0]
+                logger.info(f"Parsed GitHub URL - Owner: {owner}, Repo: {repo_name}")
+
+                # Use GitHub integration to fetch and chunk
+                from src.integrations.github_integration_improved import ImprovedGitHubIntegration
+                github = ImprovedGitHubIntegration()
+
+                try:
+                    chunks, collection_id = await github.fetch_repository_code(owner, repo_name, "main")
+                    logger.info(f"Successfully fetched {len(chunks)} chunks from GitHub repository {owner}/{repo_name}")
+
+                    # Log chunk breakdown
+                    chunk_types = {}
+                    for chunk in chunks:
+                        chunk_type = chunk.get('type', 'unknown')
+                        chunk_types[chunk_type] = chunk_types.get(chunk_type, 0) + 1
+                    logger.info(f"GitHub chunks breakdown: {chunk_types}")
+
+                except Exception as e:
+                    logger.error(f"Failed to fetch GitHub repo {owner}/{repo_name}: {e}")
+                    # Don't fall back to treating URL as code - that's meaningless
+                    chunks = []
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to fetch GitHub repository: {str(e)}. Please check the URL and ensure the repository is public."
+                    )
+
+            else:  # Not a GitHub URL or failed to parse as one
+                # Check if it looks like a GitHub URL but couldn't be parsed
+                if is_github_url and not github_match:
+                    logger.warning(f"Looks like GitHub URL but couldn't parse: '{code_stripped[:100]}'")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid GitHub URL format. Expected: https://github.com/owner/repo"
+                    )
+
+                # It's actual code - chunk it
+                logger.info("Code snippet provided, performing tree-sitter chunking")
+
+                # Use the ACTUAL working CodeChunker that has tree-sitter!
+                from src.utils.local_ingestion import CodeChunker
+                import tempfile
+                import os
+
+                # Create a temp file for the code (CodeChunker needs a file)
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp:
+                    tmp.write(request.code_snippet)
+                    tmp_path = tmp.name
+
+                try:
+                    # Use the real tree-sitter chunker
+                    chunker = CodeChunker()
+                    chunks = chunker.chunk_file(tmp_path)
+                    logger.info(f"Tree-sitter chunking complete: {len(chunks)} semantic chunks created")
+
+                    # Log chunk details
+                    chunk_types = {}
+                    for chunk in chunks:
+                        chunk_type = chunk.get('type', 'unknown')
+                        chunk_types[chunk_type] = chunk_types.get(chunk_type, 0) + 1
+                    logger.info(f"Chunk breakdown: {chunk_types}")
+
+                finally:
+                    # Clean up temp file
+                    os.unlink(tmp_path)
+
+        # If we have chunks (from either GitHub or code snippet), parse them
+        if chunks:
+            # Parse chunks with NLP parser
+            from src.parsers.nlp_parser_cerebras import ImprovedNLPParser
+            nlp_parser = ImprovedNLPParser(Settings())
+            asset = await nlp_parser.parse_code_chunks(chunks)
+
+            # Update the asset description to include DFD info
+            # Note: AssetInput doesn't have components/interactions fields, so we embed in description
+            dfd_info = f"\nDFD Components: {', '.join(components)}\n"
+            dfd_info += f"DFD Flows: {'; '.join(flows[:5])}"  # First 5 flows
+            asset.description = (request.description or f"Custom DFD with {len(components)} components") + dfd_info
+
+            # Merge compliance requirements
+            existing = set(asset.compliance_requirements or [])
+            existing.update(request.compliance_requirements)
+            asset.compliance_requirements = list(existing)
+
+            logger.info(f"Merged custom DFD with code analysis: {len(components)} components, {len(chunks)} tree-sitter chunks")
+
+        else:
+            # No code snippet, use only the custom DFD
+            asset = AssetInput(
+                description=request.description or f"Custom DFD with {len(components)} components",
+                component_type="business_logic",  # Valid enum value
+                data_sensitivity="high",
+                deployment_environment="cloud",
+                frameworks=components[:3],  # Use first 3 as frameworks
+                components=components,
+                interactions=flows,
+                compliance_requirements=request.compliance_requirements
+            )
 
         # Run threat analysis
         orchestrator = ThreatModelingOrchestrator(Settings())
@@ -1029,26 +1148,37 @@ async def upload_custom_dfd(request: DFDUploadRequest):
         # Store in database
         threat_models_db[threat_model.model_id] = threat_model
 
+        # Track chunks processed
+        chunks_processed = len(chunks) if request.code_snippet else 0
+
         logger.info(
             "Custom DFD analysis complete",
             model_id=str(threat_model.model_id),
             components=len(components),
             flows=len(flows),
+            chunks_processed=chunks_processed,
             vulnerabilities=len(threat_model.vulnerabilities)
         )
+
+        # Build analysis message
+        message_parts = [f"Custom DFD analyzed successfully with {len(components)} components"]
+        if chunks_processed > 0:
+            message_parts.append(f"and {chunks_processed} tree-sitter chunks")
 
         # Return summary
         return AnalyzeResponse(
             model_id=threat_model.model_id,
             status="completed",
-            message=f"Custom DFD analyzed successfully with {len(components)} components",
+            message=" ".join(message_parts),
             summary={
                 "vulnerabilities": len(threat_model.vulnerabilities),
                 "critical": sum(1 for v in threat_model.vulnerabilities if v.severity.value == "critical"),
                 "high": sum(1 for v in threat_model.vulnerabilities if v.severity.value == "high"),
                 "components": components,
-                "data_flows": flows[:10]  # First 10 flows
-            }
+                "data_flows": flows[:10],  # First 10 flows
+                "chunks_processed": chunks_processed
+            },
+            chunks_processed=chunks_processed
         )
 
     except Exception as e:

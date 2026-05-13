@@ -2,6 +2,39 @@
  * GitHub Repository Analysis v2 - Uses improved backend with PyGithub + Tree-sitter
  */
 
+// Function for just fetching and displaying code (RETRIEVE button)
+async function fetchGitHubCodeOnly() {
+    const repoUrl = document.getElementById('githubRepoUrl').value.trim();
+
+    if (!repoUrl) {
+        alert('[!] PLEASE ENTER A GITHUB REPOSITORY URL');
+        return;
+    }
+
+    // Parse GitHub URL
+    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
+    if (!match) {
+        alert('[X] INVALID GITHUB URL\n\nEXPECTED FORMAT:\nhttps://github.com/username/repository');
+        return;
+    }
+
+    const [, owner, repoName] = match;
+    const repo = repoName.replace('.git', '');
+
+    // Just show in code snippet that we have the URL ready
+    document.getElementById('codeSnippet').value =
+        `[READY] GitHub Repository: ${owner}/${repo}\n\n` +
+        `Click INITIATE THREAT ANALYSIS to run full analysis with tree-sitter chunking.\n\n` +
+        `The analysis will:\n` +
+        `• Fetch all code files from the repository\n` +
+        `• Perform semantic chunking using tree-sitter\n` +
+        `• Identify vulnerabilities and security issues\n` +
+        `• Generate comprehensive threat model`;
+
+    console.log(`[✓] GitHub URL ready for analysis: ${owner}/${repo}`);
+}
+
+// Full analysis function (called internally, not by button)
 async function analyzeGitHubRepository() {
     const repoUrl = document.getElementById('githubRepoUrl').value.trim();
 
@@ -106,3 +139,4 @@ function fetchGitHubRepo() {
 
 // Export for use in main app.js
 window.analyzeGitHubRepository = analyzeGitHubRepository;
+window.fetchGitHubCodeOnly = fetchGitHubCodeOnly;

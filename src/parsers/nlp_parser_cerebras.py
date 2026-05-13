@@ -61,6 +61,40 @@ class CerebrasFastParser:
         """
         logger.info("Parsing with Cerebras", description_length=len(description))
 
+        # Check if code snippet is provided for tree-sitter analysis
+        if code_snippet:
+            logger.info(f"Code snippet provided for analysis, length: {len(code_snippet)} characters")
+
+            # Use the REAL tree-sitter CodeChunker
+            from src.utils.local_ingestion import CodeChunker
+            import tempfile
+            import os
+
+            # Create temp file for tree-sitter parsing
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp:
+                tmp.write(code_snippet)
+                tmp_path = tmp.name
+
+            try:
+                # Use the actual tree-sitter chunker
+                chunker = CodeChunker()
+                chunks = chunker.chunk_file(tmp_path)
+                logger.info(f"Tree-sitter chunking complete: {len(chunks)} semantic chunks created")
+
+                # Log chunk types
+                chunk_types = {}
+                for chunk in chunks:
+                    chunk_type = chunk.get('type', 'unknown')
+                    chunk_types[chunk_type] = chunk_types.get(chunk_type, 0) + 1
+                logger.info(f"Chunk breakdown: {chunk_types}")
+
+            finally:
+                # Clean up
+                os.unlink(tmp_path)
+
+            # Parse chunks
+            return await self.parse_code_chunks(chunks)
+
         if self.client:
             try:
                 result = self._parse_with_cerebras(description, code_snippet)
@@ -73,12 +107,44 @@ class CerebrasFastParser:
         logger.info("Parsing complete", component_type=result.component_type)
         return result
 
+    def _basic_chunk_code(self, code_snippet: str) -> List[dict]:
+        """
+        Basic code chunking without tree-sitter.
+        Splits code into logical chunks based on simple heuristics.
+        """
+        chunks = []
+        lines = code_snippet.split('\n')
+
+        # Create chunks of roughly 50 lines each
+        chunk_size = 50
+        for i in range(0, len(lines), chunk_size):
+            chunk_lines = lines[i:i + chunk_size]
+            chunk_content = '\n'.join(chunk_lines)
+
+            # Try to detect what type of code this is
+            chunk_type = 'code'
+            if any(keyword in chunk_content.lower() for keyword in ['function', 'def ', 'const ', 'var ']):
+                chunk_type = 'function'
+            elif any(keyword in chunk_content.lower() for keyword in ['class ', 'interface ', 'struct ']):
+                chunk_type = 'class'
+
+            chunks.append({
+                'type': chunk_type,
+                'content': chunk_content,
+                'start_line': i,
+                'end_line': min(i + chunk_size, len(lines))
+            })
+
+        return chunks
+
     async def parse_code_chunks(self, chunks: List[dict]) -> AssetInput:
         """
         Parse code chunks - optimized for Cerebras 8K token limit.
         """
         if not chunks:
             return self._parse_basic("Empty codebase", None)
+
+        logger.info(f"Analyzing {len(chunks)} code chunks")
 
         # For Cerebras, strictly limit to stay under 8K tokens
         # Roughly 1 token = 4 chars, so 8K tokens = ~32K chars
@@ -106,6 +172,15 @@ class CerebrasFastParser:
             elif chunk.get('type') == 'class':
                 classes.append(chunk.get('name', 'unknown'))
 
+        # Log detected files and languages
+        logger.info(f"Files detected: {len(files_seen)}")
+        logger.info(f"Languages detected: {', '.join(list(languages))}")
+        logger.info(f"Functions found: {len(functions)}, Classes found: {len(classes)}")
+
+        # Log sample of files being analyzed
+        for file in list(files_seen)[:5]:
+            logger.info(f"  - Analyzing file: {file}")
+
         # Create very concise summary
         summary = f"Codebase: {len(chunks)} chunks from {len(files_seen)} files. "
         summary += f"Languages: {', '.join(list(languages)[:3])}. "
@@ -116,7 +191,18 @@ class CerebrasFastParser:
         for file in list(files_seen)[:10]:
             code_context += f"- {file}\n"
 
-        return await self.parse_description(summary, code_context)
+        # Parse the summary and code context directly (don't call parse_description to avoid recursion)
+        if self.client:
+            try:
+                result = self._parse_with_cerebras(summary, code_context)
+            except Exception as e:
+                logger.error(f"Cerebras parsing failed: {e}")
+                result = self._parse_basic(summary, code_context)
+        else:
+            result = self._parse_basic(summary, code_context)
+
+        logger.info("Code chunk parsing complete", component_type=result.component_type)
+        return result
 
     def _parse_with_cerebras(self, description: str, code_snippet: Optional[str] = None) -> AssetInput:
         """

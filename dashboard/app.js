@@ -38,9 +38,11 @@ function getDFDUploadData() {
     const format = document.getElementById('dfdFormat').value;
     const content = document.getElementById('dfdContent').value.trim();
 
-    if (format && content) {
+    // Only return DFD data if there's actual content in the DFD editor
+    // Ignore format selection if content is empty
+    if (content && content.length > 0) {
         return {
-            format: format,
+            format: format || 'auto',  // Default to auto if no format selected
             content: content
         };
     }
@@ -398,15 +400,16 @@ async function handleAnalyzeSubmit(e) {
 
     // Get form data
     const description = document.getElementById('description').value.trim();
-    const codeSnippet = document.getElementById('codeSnippet').value.trim();
+    let codeSnippet = document.getElementById('codeSnippet').value.trim();
+    const githubUrl = document.getElementById('githubRepoUrl').value.trim();
     const complianceCheckboxes = document.querySelectorAll('input[name="compliance"]:checked');
     const compliance = Array.from(complianceCheckboxes).map(cb => cb.value);
 
     // Get DFD upload data if present
     const dfdUploadData = getDFDUploadData();
 
-    if (!description && !dfdUploadData) {
-        alert('ALERT: PROVIDE SYSTEM DESCRIPTION OR UPLOAD A DFD');
+    if (!description && !dfdUploadData && !githubUrl) {
+        alert('ALERT: PROVIDE SYSTEM DESCRIPTION, GITHUB URL, OR UPLOAD A DFD');
         return;
     }
 
@@ -421,8 +424,21 @@ async function handleAnalyzeSubmit(e) {
     try {
         let response;
 
-        // If DFD is uploaded, use the DFD upload endpoint
+        // Check if DFD is uploaded (prioritize DFD upload with GitHub)
         if (dfdUploadData) {
+            // If we have GitHub URL, put it in code_snippet field for the DFD endpoint
+            let codeToAnalyze = codeSnippet;
+
+            // If GitHub URL is provided, use that instead of code snippet
+            if (githubUrl) {
+                console.log('ANALYZING CUSTOM DFD WITH GITHUB REPOSITORY (TREE-SITTER CHUNKING)...');
+                codeToAnalyze = githubUrl;  // Send GitHub URL as code_snippet
+            } else if (codeSnippet) {
+                console.log('ANALYZING CUSTOM DFD WITH CODE SNIPPET (TREE-SITTER CHUNKING)...');
+            } else {
+                console.log('ANALYZING CUSTOM DFD ARCHITECTURE...');
+            }
+
             response = await fetch(`${API_BASE_URL}/api/dfd/upload`, {
                 method: 'POST',
                 headers: {
@@ -432,6 +448,38 @@ async function handleAnalyzeSubmit(e) {
                     format: dfdUploadData.format,
                     content: dfdUploadData.content,
                     description: description || 'Custom DFD Analysis',
+                    code_snippet: codeToAnalyze || null,  // Can be GitHub URL or actual code
+                    compliance_requirements: compliance
+                })
+            });
+        }
+        // If only GitHub URL (no DFD), use GitHub endpoint directly
+        else if (githubUrl) {
+            console.log('FETCHING AND ANALYZING GITHUB REPOSITORY WITH TREE-SITTER CHUNKING...');
+
+            // Update UI to show GitHub analysis is happening
+            const codeSnippetField = document.getElementById('codeSnippet');
+            codeSnippetField.value = `[ANALYZING] GitHub Repository: ${githubUrl}\n\nFetching code and performing tree-sitter semantic chunking...`;
+
+            // Parse GitHub URL
+            const match = githubUrl.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
+            if (!match) {
+                throw new Error('Invalid GitHub URL format');
+            }
+
+            const [, owner, repo] = match;
+            const repoName = repo.replace('.git', '');
+
+            // Use the improved GitHub analyze endpoint (v2) which does tree-sitter chunking
+            response = await fetch(`${API_BASE_URL}/api/analyze/github-v2`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    repo_owner: owner,
+                    repo_name: repoName,
+                    branch: 'main',  // Default to main, could make this configurable
                     compliance_requirements: compliance
                 })
             });
