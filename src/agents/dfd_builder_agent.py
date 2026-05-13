@@ -20,8 +20,9 @@ from src.models.dfd_components import (
     TransportProtocol,
     AuthenticationMethod
 )
-from src.models.threats import AssetInput
+from src.models.threats import AssetInput, Vulnerability
 from src.config import Settings
+# LLM generator removed - using heuristics for reliability
 
 logger = structlog.get_logger()
 
@@ -74,6 +75,7 @@ class DFDBuilder:
     async def build_dfd(self, asset: AssetInput) -> DataFlowDiagram:
         """
         Build a Data Flow Diagram from system description.
+        Using heuristics-based generation for reliability.
 
         Args:
             asset: Structured asset input
@@ -83,8 +85,7 @@ class DFDBuilder:
         """
         logger.info("Building DFD from system description")
 
-        # For now, create a smart DFD based on the asset input
-        # In a full implementation, this would use the LLM agent
+        # Use heuristic-based generation (more reliable than LLM for Mermaid syntax)
         dfd = self._create_smart_dfd(asset)
 
         # Validate security controls
@@ -104,10 +105,13 @@ class DFDBuilder:
             description=asset.description
         )
 
-        # 1. Create External Entity (User/Client)
+        desc_lower = asset.description.lower()
+
+        # 1. Create multiple external entities for realistic architecture
+        # End Users
         user_entity = ExternalEntity(
-            name="User/Client",
-            description="External user or client system",
+            name="End Users",
+            description="External end users accessing the system",
             entity_type="user",
             trust_level=TrustLevel.UNTRUSTED,
             is_authenticated=False,
@@ -115,21 +119,129 @@ class DFDBuilder:
         )
         dfd.external_entities.append(user_entity)
 
-        # 2. Create main application process
-        app_process = Process(
-            name=f"{asset.component_type.value.title()} Service" if asset.component_type else "Application",
-            description=asset.description,
+        # Admin Users if relevant
+        if 'admin' in desc_lower or 'management' in desc_lower:
+            admin_entity = ExternalEntity(
+                name="Admin Portal",
+                description="Administrative interface",
+                entity_type="user",
+                trust_level=TrustLevel.MEDIUM_TRUST,
+                is_authenticated=True,
+                can_be_malicious=False
+            )
+            dfd.external_entities.append(admin_entity)
+
+        # External APIs if mentioned
+        if 'api' in desc_lower or 'third' in desc_lower or 'external' in desc_lower:
+            api_entity = ExternalEntity(
+                name="3rd Party Services",
+                description="External API integrations",
+                entity_type="system",
+                trust_level=TrustLevel.LOW_TRUST,
+                is_authenticated=True,
+                can_be_malicious=False
+            )
+            dfd.external_entities.append(api_entity)
+
+        # 2. Create realistic multi-tier process architecture
+
+        # Frontend Layer
+        if any(x in desc_lower for x in ['web', 'ui', 'frontend', 'react', 'angular', 'vue', 'browser']):
+            frontend_process = Process(
+                name="React Frontend",
+                description="Single-page application UI",
+                trust_level=TrustLevel.LOW_TRUST,
+                implementsAuthentication=False,
+                implementsAuthorization=False,
+                sanitizesInput=True,
+                encodesOutput=True,
+                processes_pii=False,
+                processes_credentials=False,
+                technology="React/Next.js",
+                programming_language="JavaScript"
+            )
+            dfd.processes.append(frontend_process)
+
+        # API Gateway/Load Balancer
+        api_gateway = Process(
+            name="API Gateway",
+            description="Request routing, rate limiting, authentication",
             trust_level=TrustLevel.MEDIUM_TRUST,
-            implementsAuthentication='auth' in asset.description.lower() or asset.component_type == 'authentication',
-            implementsAuthorization=asset.component_type == 'authentication',
-            sanitizesInput=False,  # Assume not unless proven
+            implementsAuthentication=True,
+            implementsAuthorization=False,
+            sanitizesInput=True,
             encodesOutput=False,
-            processes_pii=asset.data_sensitivity in ['high', 'critical'] or 'pii' in asset.description.lower(),
-            processes_credentials='password' in asset.description.lower() or 'credential' in asset.description.lower(),
-            technology=', '.join(asset.frameworks) if asset.frameworks else None,
-            programming_language=asset.programming_languages[0] if asset.programming_languages else None
+            processes_pii=False,
+            processes_credentials=True,
+            technology="Kong/Nginx",
+            programming_language="Configuration"
+        )
+        dfd.processes.append(api_gateway)
+
+        # Authentication Service
+        if 'auth' in desc_lower or 'login' in desc_lower:
+            auth_service = Process(
+                name="Auth Service",
+                description="OAuth2/JWT authentication",
+                trust_level=TrustLevel.HIGH_TRUST,
+                implementsAuthentication=True,
+                implementsAuthorization=True,
+                sanitizesInput=True,
+                encodesOutput=False,
+                processes_pii=True,
+                processes_credentials=True,
+                technology="Keycloak/Auth0",
+                programming_language=asset.programming_languages[0] if asset.programming_languages else "Python"
+            )
+            dfd.processes.append(auth_service)
+
+        # Main Business Logic
+        app_process = Process(
+            name="Business Logic Service",
+            description="Core application logic and processing",
+            trust_level=TrustLevel.MEDIUM_TRUST,
+            implementsAuthentication=False,
+            implementsAuthorization=True,
+            sanitizesInput=False,  # Common vulnerability point
+            encodesOutput=False,
+            processes_pii=asset.data_sensitivity in ['high', 'critical'],
+            processes_credentials='password' in desc_lower,
+            technology=', '.join(asset.frameworks) if asset.frameworks else "Express/FastAPI",
+            programming_language=asset.programming_languages[0] if asset.programming_languages else "Python"
         )
         dfd.processes.append(app_process)
+
+        # Microservices
+        if 'microservice' in desc_lower or 'distributed' in desc_lower:
+            payment_service = Process(
+                name="Payment Service",
+                description="Payment processing microservice",
+                trust_level=TrustLevel.HIGH_TRUST,
+                implementsAuthentication=False,
+                implementsAuthorization=True,
+                sanitizesInput=True,
+                encodesOutput=False,
+                processes_pii=True,
+                processes_credentials=False,
+                technology="Stripe/PayPal SDK",
+                programming_language="Python"
+            )
+            dfd.processes.append(payment_service)
+
+            notification_service = Process(
+                name="Notification Service",
+                description="Email/SMS notifications",
+                trust_level=TrustLevel.MEDIUM_TRUST,
+                implementsAuthentication=False,
+                implementsAuthorization=False,
+                sanitizesInput=True,
+                encodesOutput=True,
+                processes_pii=True,
+                processes_credentials=False,
+                technology="SendGrid/Twilio",
+                programming_language="Node.js"
+            )
+            dfd.processes.append(notification_service)
 
         # 3. Create data store if database mentioned
         if any(db in asset.description.lower() for db in ['database', 'db', 'postgresql', 'mysql', 'mongodb', 'sql']):
@@ -235,22 +347,25 @@ class DFDBuilder:
             for entity in dfd.external_entities:
                 icon = "USER" if entity.entity_type == "user" else "EXTERNAL"
                 # Escape special characters and use quotes
-                safe_name = entity.name.replace('"', "'")
-                mermaid_code += f'    {entity.id.hex[:8]}["{icon} - {safe_name}"]\n'
+                safe_name = entity.name.replace('"', "'").replace('\n', ' ').replace('|', '/')
+                node_id = entity.id.hex[:8]
+                mermaid_code += f'    {node_id}["{icon} - {safe_name}"]\n'
 
             # Add processes
             for process in dfd.processes:
                 icon = "AUTH" if process.implementsAuthentication else "PROCESS"
-                safe_name = process.name.replace('"', "'")
-                mermaid_code += f'    {process.id.hex[:8]}["{icon} - {safe_name}"]\n'
+                safe_name = process.name.replace('"', "'").replace('\n', ' ').replace('|', '/')
+                node_id = process.id.hex[:8]
+                mermaid_code += f'    {node_id}["{icon} - {safe_name}"]\n'
 
             # Add data stores
             for store in dfd.data_stores:
                 icon = "ENCRYPTED DB" if store.isEncrypted else "DATABASE"
-                safe_name = store.name.replace('"', "'")
-                mermaid_code += f'    {store.id.hex[:8]}[("{icon} - {safe_name}")]\n'
+                safe_name = store.name.replace('"', "'").replace('\n', ' ').replace('|', '/')
+                node_id = store.id.hex[:8]
+                mermaid_code += f'    {node_id}[("{icon} - {safe_name}")]\n'
 
-            # Add data flows
+            # Add data flows - SIMPLE VERSION WITHOUT COMPLEX LOGIC
             for flow in dfd.data_flows:
                 arrow = "==>" if flow.isEncrypted else "-->"
                 label = f"{flow.protocol.value}"

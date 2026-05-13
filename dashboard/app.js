@@ -20,6 +20,325 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// DFD Upload Functions
+function toggleDFDEditor() {
+    const dfdEditorContainer = document.getElementById('dfdEditorContainer');
+    const dfdStatus = document.getElementById('dfdUploadStatus');
+
+    if (dfdEditorContainer.style.display === 'none' || dfdEditorContainer.style.display === '') {
+        dfdEditorContainer.style.display = 'block';
+        dfdStatus.textContent = 'DFD Editor opened. Type or paste your diagram to see live preview.';
+        dfdStatus.style.color = '#10b981';
+    } else {
+        dfdEditorContainer.style.display = 'none';
+    }
+}
+
+function getDFDUploadData() {
+    const format = document.getElementById('dfdFormat').value;
+    const content = document.getElementById('dfdContent').value.trim();
+
+    if (format && content) {
+        return {
+            format: format,
+            content: content
+        };
+    }
+    return null;
+}
+
+// Real-time DFD Preview Rendering
+function renderDFDPreview() {
+    const format = document.getElementById('dfdFormat').value;
+    const content = document.getElementById('dfdContent').value.trim();
+    const previewDiv = document.getElementById('dfdPreviewContent');
+
+    if (!content) {
+        previewDiv.innerHTML = '<div style="color: #64748b; font-size: 12px; text-align: center; padding-top: 100px;"><div style="margin-bottom: 10px;">NO PREVIEW AVAILABLE</div><div style="font-size: 11px; color: #475569;">Start typing or paste a diagram</div></div>';
+        return;
+    }
+
+    // Auto-detect format if not selected
+    let detectedFormat = format;
+    if (!format || format === 'auto' || format === '') {
+        if (content.startsWith('@startuml')) {
+            detectedFormat = 'plantuml';
+        } else if (content.includes('graph') || content.includes('flowchart') || content.includes('-->')) {
+            detectedFormat = 'mermaid';
+        } else if (content.startsWith('{')) {
+            detectedFormat = 'json';
+        }
+    }
+
+    // Convert to Mermaid format for preview
+    let mermaidCode = '';
+
+    if (detectedFormat === 'mermaid') {
+        mermaidCode = content;
+    } else if (detectedFormat === 'plantuml') {
+        mermaidCode = convertPlantUMLToMermaid(content);
+    } else if (detectedFormat === 'json') {
+        mermaidCode = convertJSONToMermaid(content);
+    } else {
+        // Try to render as Mermaid anyway
+        mermaidCode = content;
+    }
+
+    if (mermaidCode) {
+        console.log('Rendering Mermaid code:', mermaidCode);
+
+        try {
+            // Clear previous content and set new mermaid code
+            previewDiv.innerHTML = '';
+
+            // Create a new div for the diagram
+            const diagramDiv = document.createElement('div');
+            diagramDiv.className = 'mermaid';
+            diagramDiv.textContent = mermaidCode;
+            previewDiv.appendChild(diagramDiv);
+
+            // Force Mermaid to re-render
+            mermaid.init(undefined, diagramDiv);
+            console.log('Mermaid render triggered');
+        } catch (e) {
+            console.error('Mermaid render error:', e);
+            previewDiv.innerHTML = `<div style="color: #ef4444; font-size: 12px; padding: 10px;">
+                <div style="margin-bottom: 5px;">SYNTAX ERROR</div>
+                <div style="font-size: 11px; color: #f87171;">${e.message || 'Invalid diagram syntax'}</div>
+            </div>`;
+        }
+    } else {
+        previewDiv.innerHTML = '<div style="color: #64748b; font-size: 12px;">Format not supported for preview. Mermaid diagrams preview available.</div>';
+    }
+}
+
+// Convert PlantUML to Mermaid (basic conversion)
+function convertPlantUMLToMermaid(plantuml) {
+    try {
+        let mermaid = 'graph TD\n';
+        const lines = plantuml.split('\n');
+        const nodes = new Set();
+
+        for (const line of lines) {
+            if (line.includes('->')) {
+                const parts = line.split('->').map(p => p.trim());
+                if (parts.length === 2) {
+                    const [from, toWithLabel] = parts;
+                    const [to, label] = toWithLabel.includes(':') ?
+                        toWithLabel.split(':').map(p => p.trim()) :
+                        [toWithLabel, ''];
+
+                    // Clean up node names
+                    const fromNode = from.replace(/^actor\s+/i, '').trim();
+                    const toNode = to.trim();
+
+                    nodes.add(fromNode);
+                    nodes.add(toNode);
+
+                    if (label) {
+                        mermaid += `    ${fromNode} -->|${label}| ${toNode}\n`;
+                    } else {
+                        mermaid += `    ${fromNode} --> ${toNode}\n`;
+                    }
+                }
+            }
+        }
+
+        return mermaid || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Convert JSON to Mermaid
+function convertJSONToMermaid(jsonStr) {
+    try {
+        const data = JSON.parse(jsonStr);
+        let mermaid = 'graph TD\n';
+
+        // Add nodes
+        if (data.nodes) {
+            data.nodes.forEach(node => {
+                const nodeId = node.id || node.name;
+                const nodeType = node.type === 'database' ? `[(${nodeId})]` : `[${nodeId}]`;
+                mermaid += `    ${nodeId}${nodeType}\n`;
+            });
+        }
+
+        // Add edges
+        if (data.edges || data.flows) {
+            const edges = data.edges || data.flows;
+            edges.forEach(edge => {
+                const label = edge.label || edge.protocol || '';
+                if (label) {
+                    mermaid += `    ${edge.from} -->|${label}| ${edge.to}\n`;
+                } else {
+                    mermaid += `    ${edge.from} --> ${edge.to}\n`;
+                }
+            });
+        }
+
+        return mermaid;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Open DFD in fullscreen popup window
+function openDFDFullscreen() {
+    const content = document.getElementById('dfdContent').value.trim();
+
+    if (!content) {
+        alert('No DFD to display. Please enter a diagram first.');
+        return;
+    }
+
+    // Create popup window
+    const popupWindow = window.open('', 'DFD Viewer', 'width=1200,height=800,resizable=yes,scrollbars=yes');
+
+    // Get current Mermaid code
+    const format = document.getElementById('dfdFormat').value;
+    let mermaidCode = '';
+
+    // Auto-detect format if not selected
+    let detectedFormat = format;
+    if (!format || format === 'auto' || format === '') {
+        if (content.startsWith('@startuml')) {
+            detectedFormat = 'plantuml';
+        } else if (content.includes('graph') || content.includes('flowchart') || content.includes('-->')) {
+            detectedFormat = 'mermaid';
+        } else if (content.startsWith('{')) {
+            detectedFormat = 'json';
+        }
+    }
+
+    // Convert to Mermaid format
+    if (detectedFormat === 'mermaid') {
+        mermaidCode = content;
+    } else if (detectedFormat === 'plantuml') {
+        mermaidCode = convertPlantUMLToMermaid(content);
+    } else if (detectedFormat === 'json') {
+        mermaidCode = convertJSONToMermaid(content);
+    } else {
+        mermaidCode = content;
+    }
+
+    // Create HTML content for popup
+    const popupHTML = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>DFD Fullscreen View</title>
+            <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+            <style>
+                body {
+                    margin: 0;
+                    padding: 20px;
+                    background: #0a0e1a;
+                    color: #e5e7eb;
+                    font-family: 'JetBrains Mono', monospace;
+                    display: flex;
+                    flex-direction: column;
+                    height: 100vh;
+                }
+                .header {
+                    padding: 10px 20px;
+                    background: #1e293b;
+                    border-radius: 8px;
+                    margin-bottom: 20px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                .title {
+                    font-size: 18px;
+                    color: #10b981;
+                    text-transform: uppercase;
+                }
+                .controls {
+                    display: flex;
+                    gap: 10px;
+                }
+                button {
+                    padding: 8px 16px;
+                    background: #3b82f6;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                    text-transform: uppercase;
+                }
+                button:hover {
+                    background: #2563eb;
+                }
+                .diagram-container {
+                    flex: 1;
+                    background: #0f172a;
+                    border: 1px solid #334155;
+                    border-radius: 8px;
+                    padding: 20px;
+                    overflow: auto;
+                }
+                .error {
+                    color: #ef4444;
+                    text-align: center;
+                    padding: 40px;
+                }
+                .mermaid {
+                    display: flex;
+                    justify-content: center;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <div class="title">DFD Fullscreen Viewer</div>
+                <div class="controls">
+                    <button onclick="window.location.reload()">REFRESH</button>
+                    <button onclick="window.print()">PRINT</button>
+                    <button onclick="window.close()">CLOSE</button>
+                </div>
+            </div>
+            <div class="diagram-container">
+                <div class="mermaid" id="diagram">
+                    ${mermaidCode}
+                </div>
+            </div>
+            <script>
+                mermaid.initialize({
+                    startOnLoad: true,
+                    theme: 'dark',
+                    themeVariables: {
+                        darkMode: true,
+                        background: '#0a0e1a',
+                        primaryColor: '#06b6d4',
+                        primaryTextColor: '#e5e7eb',
+                        primaryBorderColor: '#334155',
+                        lineColor: '#64748b',
+                        secondaryColor: '#8b5cf6',
+                        tertiaryColor: '#10b981',
+                        fontSize: '16px',
+                        fontFamily: 'JetBrains Mono, monospace'
+                    },
+                    flowchart: {
+                        nodeSpacing: 100,
+                        rankSpacing: 120,
+                        curve: 'basis',
+                        padding: 30,
+                        useMaxWidth: false
+                    }
+                });
+            </script>
+        </body>
+        </html>
+    `;
+
+    // Write content to popup window
+    popupWindow.document.write(popupHTML);
+    popupWindow.document.close();
+}
+
 // Initialize Mermaid
 mermaid.initialize({
     startOnLoad: true,
@@ -83,8 +402,11 @@ async function handleAnalyzeSubmit(e) {
     const complianceCheckboxes = document.querySelectorAll('input[name="compliance"]:checked');
     const compliance = Array.from(complianceCheckboxes).map(cb => cb.value);
 
-    if (!description) {
-        alert('ALERT: PROVIDE SYSTEM DESCRIPTION');
+    // Get DFD upload data if present
+    const dfdUploadData = getDFDUploadData();
+
+    if (!description && !dfdUploadData) {
+        alert('ALERT: PROVIDE SYSTEM DESCRIPTION OR UPLOAD A DFD');
         return;
     }
 
@@ -97,18 +419,36 @@ async function handleAnalyzeSubmit(e) {
     simulateProgress();
 
     try {
-        // Call API
-        const response = await fetch(`${API_BASE_URL}/api/analyze`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                description: description,
-                code_snippet: codeSnippet || null,
-                compliance_requirements: compliance
-            })
-        });
+        let response;
+
+        // If DFD is uploaded, use the DFD upload endpoint
+        if (dfdUploadData) {
+            response = await fetch(`${API_BASE_URL}/api/dfd/upload`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    format: dfdUploadData.format,
+                    content: dfdUploadData.content,
+                    description: description || 'Custom DFD Analysis',
+                    compliance_requirements: compliance
+                })
+            });
+        } else {
+            // Regular analysis
+            response = await fetch(`${API_BASE_URL}/api/analyze`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    description: description,
+                    code_snippet: codeSnippet || null,
+                    compliance_requirements: compliance
+                })
+            });
+        }
 
         if (!response.ok) {
             throw new Error(`API ERROR: ${response.status}`);
@@ -549,6 +889,10 @@ function displayMAESTROValidation(maestroAnalysis) {
 function handleNewAnalysis() {
     document.getElementById('description').value = '';
     document.getElementById('codeSnippet').value = '';
+    document.getElementById('dfdContent').value = '';
+    document.getElementById('dfdFormat').value = '';
+    document.getElementById('dfdEditorContainer').style.display = 'none';
+    document.getElementById('dfdPreviewContent').innerHTML = '<div style="color: #64748b; font-size: 12px; text-align: center;"><div style="margin-bottom: 10px;">NO PREVIEW AVAILABLE</div><div style="font-size: 11px; color: #475569;">Start typing or paste a diagram</div></div>';
     document.querySelectorAll('input[name="compliance"]').forEach(cb => cb.checked = false);
 
     resultsSection.classList.add('hidden');

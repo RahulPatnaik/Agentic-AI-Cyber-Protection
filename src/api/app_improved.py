@@ -798,6 +798,13 @@ class GitHubFixPRRequest(BaseModel):
     base_branch: str = Field(default="main", description="Base branch to create PR against")
 
 
+class DFDUploadRequest(BaseModel):
+    """Request to upload custom DFD"""
+    format: str = Field(..., description="Format: plantuml, mermaid, json, auto")
+    content: str = Field(..., description="DFD content in specified format")
+    description: str = Field(..., description="System description for context")
+
+
 @app.post("/api/github/create-issue/{model_id}", tags=["GitHub"])
 async def create_github_issue(
     model_id: UUID,
@@ -918,6 +925,131 @@ async def create_fix_pr(
     except Exception as e:
         logger.error("Fix PR creation failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to create fix PR: {str(e)}")
+
+
+@app.post("/api/dfd/upload", response_model=AnalyzeResponse, tags=["DFD"])
+async def upload_custom_dfd(request: DFDUploadRequest):
+    """
+    Upload a custom DFD and run threat analysis on it.
+    Supports PlantUML, Mermaid, and JSON formats.
+    """
+    logger.info(f"DFD upload request received, format: {request.format}")
+
+    try:
+        # Parse the uploaded DFD based on format
+        if request.format == "plantuml":
+            # Parse PlantUML syntax
+            components = []
+            flows = []
+            for line in request.content.split('\n'):
+                if '->' in line or '-->' in line:
+                    # Extract flow: source -> dest : label
+                    parts = line.split('->')
+                    if len(parts) == 2:
+                        source = parts[0].strip().split()[-1]
+                        dest_parts = parts[1].split(':')
+                        dest = dest_parts[0].strip().split()[0]
+                        label = dest_parts[1].strip() if len(dest_parts) > 1 else "data"
+                        flows.append(f"{source} sends {label} to {dest}")
+                        if source not in components:
+                            components.append(source)
+                        if dest not in components:
+                            components.append(dest)
+
+        elif request.format == "mermaid":
+            # Parse Mermaid syntax
+            components = []
+            flows = []
+            for line in request.content.split('\n'):
+                if '-->' in line or '==>' in line:
+                    # Extract: A --> B or A -->|label| B
+                    parts = line.split('-->' if '-->' in line else '==>')
+                    if len(parts) == 2:
+                        source = parts[0].strip().split('[')[-1].replace(']', '')
+                        dest_parts = parts[1].split('|')
+                        if len(dest_parts) == 3:  # Has label
+                            label = dest_parts[1]
+                            dest = dest_parts[2].strip().split('[')[0]
+                        else:
+                            label = "data"
+                            dest = parts[1].strip().split('[')[0]
+                        flows.append(f"{source} sends {label} to {dest}")
+                        if source not in components:
+                            components.append(source)
+                        if dest not in components:
+                            components.append(dest)
+
+        elif request.format == "json":
+            # Parse JSON format
+            import json
+            dfd_data = json.loads(request.content)
+            components = [node['name'] for node in dfd_data.get('nodes', [])]
+            flows = [f"{edge['from']} sends {edge.get('protocol', 'data')} to {edge['to']}"
+                    for edge in dfd_data.get('edges', [])]
+
+        else:  # Auto-detect
+            if request.content.strip().startswith('@startuml'):
+                return await upload_custom_dfd(DFDUploadRequest(
+                    format="plantuml",
+                    content=request.content,
+                    description=request.description
+                ))
+            elif 'graph' in request.content and '-->' in request.content:
+                return await upload_custom_dfd(DFDUploadRequest(
+                    format="mermaid",
+                    content=request.content,
+                    description=request.description
+                ))
+            elif request.content.strip().startswith('{'):
+                return await upload_custom_dfd(DFDUploadRequest(
+                    format="json",
+                    content=request.content,
+                    description=request.description
+                ))
+
+        # Create asset from parsed DFD
+        asset = AssetInput(
+            description=request.description or f"Custom DFD with {len(components)} components",
+            component_type="application",
+            data_sensitivity="high",
+            deployment_environment="cloud",
+            frameworks=components[:3],  # Use first 3 as frameworks
+            components=components,
+            interactions=flows
+        )
+
+        # Run threat analysis
+        orchestrator = ThreatModelingOrchestrator(Settings())
+        threat_model = await orchestrator.analyze(asset)
+
+        # Store in database
+        threat_models_db[threat_model.model_id] = threat_model
+
+        logger.info(
+            "Custom DFD analysis complete",
+            model_id=str(threat_model.model_id),
+            components=len(components),
+            flows=len(flows),
+            vulnerabilities=len(threat_model.vulnerabilities)
+        )
+
+        # Return summary
+        return AnalyzeResponse(
+            model_id=threat_model.model_id,
+            status="completed",
+            message=f"Custom DFD analyzed successfully with {len(components)} components",
+            summary={
+                "vulnerabilities": len(threat_model.vulnerabilities),
+                "critical": sum(1 for v in threat_model.vulnerabilities if v.severity.value == "critical"),
+                "high": sum(1 for v in threat_model.vulnerabilities if v.severity.value == "high"),
+                "components": components,
+                "data_flows": flows[:10]  # First 10 flows
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"DFD upload analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
