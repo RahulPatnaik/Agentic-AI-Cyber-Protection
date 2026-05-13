@@ -4,7 +4,7 @@ Coordinates multiple Pydantic AI agents for comprehensive threat modeling
 """
 
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime
 import time
 import structlog
@@ -34,6 +34,7 @@ from src.agents.symbolic_verifier import SymbolicVerifier
 from src.agents.cve_scanner import CVEScanner
 from src.agents.agentic_security_agent import AgenticSecurityAnalyzer
 from src.agents.compliance_agent import analyze_compliance, generate_compliance_summary
+from src.models.dfd_components import DataFlowDiagram
 
 logger = structlog.get_logger()
 
@@ -70,12 +71,19 @@ class ThreatModelingOrchestrator:
 
         logger.info("Initialized Threat Modeling Orchestrator with 10 agents (DFD, STRIDE, OWASP, Attack Tree, CWE, MAESTRO, Symbolic Verifier, CVE Scanner, Agentic Security)")
 
-    async def analyze(self, asset: AssetInput) -> ThreatModel:
+    async def analyze(
+        self,
+        asset: AssetInput,
+        prebuilt_dfd: Optional[DataFlowDiagram] = None,
+    ) -> ThreatModel:
         """
         Perform comprehensive threat modeling analysis using multiple agents.
 
         Args:
             asset: Structured asset input from NLP parser
+            prebuilt_dfd: Optional user-uploaded DFD. When supplied we skip
+                the LLM DFD-builder entirely and use this diagram instead.
+                This is how /api/dfd/upload preserves the user's diagram.
 
         Returns:
             Complete ThreatModel with vulnerabilities, attack paths, and recommendations
@@ -85,8 +93,16 @@ class ThreatModelingOrchestrator:
 
         try:
             # Phase 0: Build DFD and generate automated threats (OWASP pytm-style)
-            logger.warning("🔷 PHASE 0: Building Data Flow Diagram from system description")
-            dfd = await self.dfd_builder.build_dfd(asset)
+            if prebuilt_dfd is not None:
+                logger.warning(
+                    "🔷 PHASE 0: Using PRE-BUILT DFD from upload (skipping LLM DFDBuilder)"
+                )
+                dfd = prebuilt_dfd
+            else:
+                logger.warning(
+                    "🔷 PHASE 0: Building Data Flow Diagram from system description"
+                )
+                dfd = await self.dfd_builder.build_dfd(asset)
 
             logger.info(
                 "DFD built successfully",

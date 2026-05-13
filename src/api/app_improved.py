@@ -34,6 +34,7 @@ from src.parsers.nlp_parser_cerebras import CerebrasFastParser as ImprovedNLPPar
 from src.integrations.github_integration_improved import ImprovedGitHubIntegration
 from src.integrations.github_integration import GitHubIntegration  # For issue creation
 from src.api.mcp_replay_router import router as mcp_replay_router
+from src.parsers.dfd_upload_parser import parse_uploaded_dfd
 
 # Initialize logging
 logger = structlog.get_logger()
@@ -1141,9 +1142,50 @@ async def upload_custom_dfd(request: DFDUploadRequest):
                 compliance_requirements=request.compliance_requirements
             )
 
-        # Run threat analysis
+        # ------------------------------------------------------------------
+        # Convert the upload into a REAL DataFlowDiagram so the orchestrator
+        # uses the user's diagram instead of asking the LLM to rebuild one
+        # from the description. Resolve "auto" to a concrete format first.
+        # ------------------------------------------------------------------
+        concrete_fmt = request.format
+        if concrete_fmt == "auto" or concrete_fmt not in {"mermaid", "plantuml", "json"}:
+            stripped = request.content.strip()
+            if stripped.startswith("@startuml"):
+                concrete_fmt = "plantuml"
+            elif "graph" in stripped and ("-->" in stripped or "==>" in stripped):
+                concrete_fmt = "mermaid"
+            elif stripped.startswith("{"):
+                concrete_fmt = "json"
+            else:
+                concrete_fmt = None  # couldn't tell -- fall through to LLM build
+
+        prebuilt_dfd = None
+        if concrete_fmt:
+            try:
+                prebuilt_dfd = parse_uploaded_dfd(
+                    concrete_fmt,
+                    request.content,
+                    diagram_name=request.description[:80] or "Uploaded DFD",
+                )
+                logger.info(
+                    "Uploaded DFD parsed into pydantic model",
+                    format=concrete_fmt,
+                    entities=len(prebuilt_dfd.external_entities),
+                    processes=len(prebuilt_dfd.processes),
+                    stores=len(prebuilt_dfd.data_stores),
+                    flows=len(prebuilt_dfd.data_flows),
+                )
+            except Exception as parse_err:
+                # Don't abort the whole run; just fall back to LLM-built DFD.
+                logger.warning(
+                    "Could not parse uploaded DFD; falling back to LLM DFDBuilder",
+                    error=str(parse_err),
+                )
+                prebuilt_dfd = None
+
+        # Run threat analysis (use the user's DFD if we managed to build one)
         orchestrator = ThreatModelingOrchestrator(Settings())
-        threat_model = await orchestrator.analyze(asset)
+        threat_model = await orchestrator.analyze(asset, prebuilt_dfd=prebuilt_dfd)
 
         # Store in database
         threat_models_db[threat_model.model_id] = threat_model
