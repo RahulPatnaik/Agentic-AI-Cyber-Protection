@@ -1,0 +1,69 @@
+{
+  "server_name": "vulnerable-dev-mcp",
+  "server_url": "http://192.168.1.42:7777",
+  "authentication_method": null,
+  "tls_enabled": false,
+  "certificate_validation": false,
+  "allowed_agents": null,
+  "tools": [
+    {
+      "tool_name": "filesystem_read",
+      "tool_type": "filesystem",
+      "risk_level": "high",
+      "permissions": ["read_any_path"],
+      "allowed_paths": null,
+      "blocked_paths": null,
+      "requires_approval": false,
+      "authentication_required": false,
+      "rate_limit": null
+    },
+    {
+      "tool_name": "filesystem_write",
+      "tool_type": "filesystem",
+      "risk_level": "critical",
+      "permissions": ["write_any_path"],
+      "allowed_paths": null,
+      "blocked_paths": null,
+      "requires_approval": false,
+      "authentication_required": false,
+      "rate_limit": null
+    },
+    {
+      "tool_name": "shell_command",
+      "tool_type": "code_execution",
+      "risk_level": "critical",
+      "permissions": ["execute_shell"],
+      "requires_approval": false,
+      "authentication_required": false,
+      "rate_limit": null
+    },
+    {
+      "tool_name": "network_request",
+      "tool_type": "network",
+      "risk_level": "high",
+      "permissions": ["http_get", "http_post"],
+      "requires_approval": false,
+      "authentication_required": false,
+      "rate_limit": null
+    },
+    {
+      "tool_name": "database_query",
+      "tool_type": "database",
+      "risk_level": "high",
+      "permissions": ["read_query", "write_query"],
+      "requires_approval": false,
+      "authentication_required": false,
+      "rate_limit": null
+    }
+  ],
+  "_notes_for_auditor": [
+    "Server uses http:// not https:// -> insecure_transport",
+    "tls_enabled=false -> missing_tls",
+    "authentication_method=null -> missing_authentication",
+    "allowed_agents=null -> missing_agent_allowlist",
+    "filesystem_read has allowed_paths=null AND blocked_paths=null -> unrestricted_filesystem_access",
+    "shell_command has requires_approval=false -> high_risk_tool_no_approval",
+    "No tool has a rate_limit -> missing_rate_limit (x5)",
+    "filesystem_read + network_request co-resident -> tool_chaining_risk"
+  ]
+}

