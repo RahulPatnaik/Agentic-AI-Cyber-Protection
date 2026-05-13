@@ -33,6 +33,7 @@ from src.utils.local_ingestion import ingest_local_files, CodeChunker
 from src.parsers.nlp_parser_cerebras import CerebrasFastParser as ImprovedNLPParser  # Use Cerebras
 from src.integrations.github_integration_improved import ImprovedGitHubIntegration
 from src.integrations.github_integration import GitHubIntegration  # For issue creation
+from src.api.mcp_replay_router import router as mcp_replay_router
 
 # Initialize logging
 logger = structlog.get_logger()
@@ -68,6 +69,9 @@ if dashboard_path.exists():
     logger.info(f"Dashboard mounted from {dashboard_path}")
 else:
     logger.warning(f"Dashboard directory not found at {dashboard_path}")
+
+# Mount MCP attack-replay router (powers /dashboard/mcp_replay.html)
+app.include_router(mcp_replay_router)
 
 # In-memory storage for threat models
 threat_models_db: Dict[UUID, ThreatModel] = {}
