@@ -1,0 +1,143 @@
+{
+  "model_id": "6b33524f-69e8-48f6-a03e-651234bed4cb",
+  "timestamp": "2026-05-13T22:43:43",
+  "asset_description": "The FastAPI layer exposes all of this over REST, handling file uploads (DFDs), retrieving GitHub repos with tree-sitter chunking, and metrics for real-time playback that scrubs through the simulation timeline.\nDFD Components: User/Patient, Admin/Medical Staff, FastAPI Web Server, PostgreSQL Database, File Storage/Uploads, Metrics Collector, Code Chunker Service, ChromaDB Vector Store, GitHub Repository, Real-time Client, Simulation Timeline, Threat Analysis Engine, DFD Upload Service\nDFD Flows: User sends HTTPS/REST to FastAPI Web Server; Admin sends HTTPS/REST to FastAPI Web Server",
+  "vulnerabilities": [
+    {
+      "vuln_id": "vuln-001",
+      "title": "SQL Injection in Patient Data Queries",
+      "description": "The triage system's database queries for patient data may be vulnerable to SQL injection attacks if user input is not properly sanitized.",
+      "severity": "critical",
+      "cvss_score": 9.8,
+      "cwe_id": "CWE-89",
+      "affected_component": "PostgreSQL Database",
+      "recommendation": "Implement parameterized queries and input validation for all database interactions"
+    },
+    {
+      "vuln_id": "vuln-002",
+      "title": "Unencrypted PII in File Storage",
+      "description": "Patient personal information may be stored in unencrypted file uploads, violating HIPAA compliance requirements.",
+      "severity": "high",
+      "cvss_score": 8.1,
+      "cwe_id": "CWE-311",
+      "affected_component": "File Storage/Uploads",
+      "recommendation": "Implement encryption at rest for all file storage containing PII"
+    },
+    {
+      "vuln_id": "vuln-003",
+      "title": "Missing Rate Limiting on API Endpoints",
+      "description": "FastAPI endpoints lack rate limiting, making them vulnerable to DoS attacks and resource exhaustion.",
+      "severity": "high",
+      "cvss_score": 7.5,
+      "cwe_id": "CWE-770",
+      "affected_component": "FastAPI Web Server",
+      "recommendation": "Implement rate limiting middleware on all public API endpoints"
+    }
+  ],
+  "top_vulnerabilities": [
+    {
+      "vuln_id": "vuln-001",
+      "title": "SQL Injection in Patient Data Queries",
+      "severity": "critical",
+      "cvss_score": 9.8
+    },
+    {
+      "vuln_id": "vuln-002",
+      "title": "Unencrypted PII in File Storage",
+      "severity": "high",
+      "cvss_score": 8.1
+    }
+  ],
+  "attack_paths": [
+    {
+      "path_id": "path-001",
+      "entry_point": "Malicious user exploits unvalidated input in patient search API",
+      "intermediate_steps": [
+        "Craft SQL injection payload targeting patient data tables",
+        "Bypass authentication checks through SQL manipulation",
+        "Extract sensitive patient information including SSN and medical records"
+      ],
+      "target": "PostgreSQL Database",
+      "impact": "Complete breach of patient confidentiality, HIPAA violation",
+      "potential_damage": "critical",
+      "likelihood": "high"
+    },
+    {
+      "path_id": "path-002",
+      "entry_point": "Attacker targets file upload endpoint",
+      "intermediate_steps": [
+        "Upload malicious file disguised as medical document",
+        "Exploit lack of file type validation",
+        "Execute server-side code through unrestricted file upload"
+      ],
+      "target": "File Storage/Uploads",
+      "impact": "Remote code execution on server",
+      "potential_damage": "critical",
+      "likelihood": "medium"
+    },
+    {
+      "path_id": "path-003",
+      "entry_point": "DoS attack on FastAPI endpoints",
+      "intermediate_steps": [
+        "Send massive number of requests to resource-intensive endpoints",
+        "Exhaust server resources due to missing rate limiting",
+        "Cause service unavailability for legitimate medical staff"
+      ],
+      "target": "FastAPI Web Server",
+      "impact": "Service disruption affecting patient care",
+      "potential_damage": "high",
+      "likelihood": "high"
+    }
+  ],
+  "confidence_score": 0.85,
+  "threat_graph": {
+    "dfd_diagram": "graph TD\n    User[User/Patient] -->|HTTPS/REST| WebApp[FastAPI Web Server]\n    Admin[Admin/Medical Staff] -->|HTTPS/REST| WebApp\n    WebApp -->|SQL Queries| DB[(PostgreSQL Database)]\n    WebApp -->|Read/Write| FileStore[File Storage/Uploads]\n    WebApp -->|Metrics/Logs| Metrics[Metrics Collector]\n    WebApp -->|Tree-sitter Processing| Chunker[Code Chunker Service]\n    Chunker -->|Store Chunks| VectorDB[(ChromaDB Vector Store)]\n    WebApp -->|GitHub API| GitHub[GitHub Repository]\n    GitHub -->|Fetch Code| Chunker\n    WebApp -->|WebSocket| RTClient[Real-time Client]\n    RTClient -->|Playback Control| Timeline[Simulation Timeline]\n    Metrics -->|Time-series Data| Timeline\n    WebApp -->|Analyze| ThreatEngine[Threat Analysis Engine]\n    ThreatEngine -->|Query| VectorDB\n    DFDUpload[DFD Upload Service] -->|Parse| WebApp"
+  },
+  "cwe_references": [
+    {
+      "cwe_id": "CWE-89",
+      "name": "SQL Injection",
+      "description": "Improper Neutralization of Special Elements used in an SQL Command",
+      "severity": "critical"
+    },
+    {
+      "cwe_id": "CWE-311",
+      "name": "Missing Encryption of Sensitive Data",
+      "description": "The software does not encrypt sensitive or critical information before storage or transmission",
+      "severity": "high"
+    },
+    {
+      "cwe_id": "CWE-770",
+      "name": "Allocation of Resources Without Limits or Throttling",
+      "description": "The software allocates a reusable resource or group of resources on behalf of an actor without imposing any restrictions",
+      "severity": "high"
+    }
+  ],
+  "compliance_checks": {
+    "HIPAA": {
+      "compliant": false,
+      "violations": [
+        "Unencrypted storage of patient PII",
+        "Insufficient access controls on medical records",
+        "Lack of audit logging for data access"
+      ]
+    },
+    "NIST": {
+      "compliant": false,
+      "violations": [
+        "Missing rate limiting (AC-21)",
+        "Insufficient input validation (SI-10)",
+        "Weak authentication mechanisms (IA-2)"
+      ]
+    }
+  },
+  "summary": {
+    "total_vulnerabilities": 15,
+    "critical": 3,
+    "high": 7,
+    "medium": 5,
+    "components_analyzed": 30,
+    "code_chunks_analyzed": 497,
+    "files_processed": 77
+  }
+}

@@ -603,7 +603,27 @@ function displayMermaidGraph(attackPaths) {
         return;
     }
 
-    // Build Mermaid flowchart - TOP DOWN, show TOP 3 paths, FULL TEXT
+    // Helper function to escape text for Mermaid
+    function escapeMermaidText(text) {
+        if (!text) return '';
+        // Replace quotes, brackets, and special chars that break Mermaid
+        return text
+            .replace(/"/g, "'")           // Double quotes to single
+            .replace(/\[/g, '(')          // Square brackets to parentheses
+            .replace(/\]/g, ')')
+            .replace(/\|/g, '/')          // Pipe to slash
+            .replace(/\n/g, ' ')          // Newlines to space
+            .replace(/\r/g, '')           // Remove carriage returns
+            .replace(/\\/g, '/')          // Backslash to forward slash
+            .replace(/`/g, "'")           // Backticks to single quotes
+            .replace(/{/g, '(')           // Curly braces to parentheses
+            .replace(/}/g, ')')
+            .replace(/:/g, '-')           // Colons can cause issues
+            .replace(/;/g, ',')           // Semicolons to commas
+            .substring(0, 200);           // Limit length to prevent huge nodes
+    }
+
+    // Build Mermaid flowchart - TOP DOWN, show TOP 3 paths
     let mermaidCode = 'graph TD\n';  // TD = Top Down (vertical)
 
     // Take top 3 attack paths
@@ -612,23 +632,26 @@ function displayMermaidGraph(attackPaths) {
     topPaths.forEach((path, pathIndex) => {
         const baseId = pathIndex * 100;  // Space IDs to avoid conflicts
 
-        // Entry point - NO TRUNCATION
+        // Entry point - ESCAPED
         const entryId = `N${baseId}`;
-        mermaidCode += `    ${entryId}["[ENTRY] ${path.entry_point}"]\n`;
+        const entryText = escapeMermaidText(path.entry_point);
+        mermaidCode += `    ${entryId}["(ENTRY) ${entryText}"]\n`;
 
-        // Show ALL intermediate steps - NO TRUNCATION
+        // Show ALL intermediate steps - ESCAPED
         let prevId = entryId;
         path.intermediate_steps.forEach((step, stepIndex) => {
             const stepId = `N${baseId + stepIndex + 1}`;
-            mermaidCode += `    ${stepId}["${step}"]\n`;
+            const stepText = escapeMermaidText(step);
+            mermaidCode += `    ${stepId}["${stepText}"]\n`;
             mermaidCode += `    ${prevId} --> ${stepId}\n`;
             prevId = stepId;
         });
 
-        // Target/Impact - NO TRUNCATION
+        // Target/Impact - ESCAPED
         const targetId = `N${baseId + 99}`;
         const severity = path.potential_damage || 'critical';
-        mermaidCode += `    ${targetId}["[IMPACT] ${path.target || path.impact}"]\n`;
+        const impactText = escapeMermaidText(path.target || path.impact);
+        mermaidCode += `    ${targetId}["(IMPACT) ${impactText}"]\n`;
         mermaidCode += `    ${prevId} --> ${targetId}\n`;
 
         // Style the impact node

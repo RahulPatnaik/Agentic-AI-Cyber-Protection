@@ -1185,7 +1185,17 @@ async def upload_custom_dfd(request: DFDUploadRequest):
 
         # Run threat analysis (use the user's DFD if we managed to build one)
         orchestrator = ThreatModelingOrchestrator(Settings())
-        threat_model = await orchestrator.analyze(asset, prebuilt_dfd=prebuilt_dfd)
+
+        # Store original diagram if uploaded (to avoid regeneration bugs)
+        original_diagram = None
+        if concrete_fmt == "mermaid" and prebuilt_dfd:
+            original_diagram = request.content
+
+        threat_model = await orchestrator.analyze(
+            asset,
+            prebuilt_dfd=prebuilt_dfd,
+            original_diagram=original_diagram
+        )
 
         # Store in database
         threat_models_db[threat_model.model_id] = threat_model

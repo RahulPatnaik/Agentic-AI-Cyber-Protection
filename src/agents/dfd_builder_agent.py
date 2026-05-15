@@ -363,7 +363,7 @@ class DFDBuilder:
                 icon = "ENCRYPTED DB" if store.isEncrypted else "DATABASE"
                 safe_name = store.name.replace('"', "'").replace('\n', ' ').replace('|', '/')
                 node_id = store.id.hex[:8]
-                mermaid_code += f'    {node_id}[("{icon} - {safe_name}")]\n'
+                mermaid_code += f'    {node_id}[{icon} - {safe_name}]\n'
 
             # Add data flows - SIMPLE VERSION WITHOUT COMPLEX LOGIC
             for flow in dfd.data_flows:

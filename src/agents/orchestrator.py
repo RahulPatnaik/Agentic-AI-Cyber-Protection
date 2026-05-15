@@ -75,6 +75,7 @@ class ThreatModelingOrchestrator:
         self,
         asset: AssetInput,
         prebuilt_dfd: Optional[DataFlowDiagram] = None,
+        original_diagram: Optional[str] = None,
     ) -> ThreatModel:
         """
         Perform comprehensive threat modeling analysis using multiple agents.
@@ -84,6 +85,8 @@ class ThreatModelingOrchestrator:
             prebuilt_dfd: Optional user-uploaded DFD. When supplied we skip
                 the LLM DFD-builder entirely and use this diagram instead.
                 This is how /api/dfd/upload preserves the user's diagram.
+            original_diagram: Optional original Mermaid diagram text from upload
+                to preserve instead of regenerating (avoids syntax errors).
 
         Returns:
             Complete ThreatModel with vulnerabilities, attack paths, and recommendations
@@ -322,8 +325,14 @@ class ThreatModelingOrchestrator:
             # Generate CWE references
             cwe_references = self.cwe_analyzer._generate_cwe_references(asset, vulnerabilities)
 
-            # NOW generate DFD diagram with all vulnerabilities highlighted
-            dfd_diagram = self.dfd_builder.generate_mermaid_dfd(dfd, vulnerabilities)
+            # Use original uploaded diagram if available, otherwise generate
+            if original_diagram:
+                # Use the original uploaded Mermaid diagram
+                dfd_diagram = original_diagram
+                logger.info("Using original uploaded Mermaid diagram")
+            else:
+                # Generate DFD diagram with all vulnerabilities highlighted
+                dfd_diagram = self.dfd_builder.generate_mermaid_dfd(dfd, vulnerabilities)
 
             # Build threat graph for visualization (includes DFD + attack paths)
             attack_tree_graph = self.attack_tree_analyzer.build_graph_structure(attack_paths)
